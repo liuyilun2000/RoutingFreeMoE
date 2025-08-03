@@ -121,7 +121,7 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
         attention_dropout (`float`, *optional*, defaults to 0.0):
             The dropout ratio for the attention probabilities.
         
-        ### NoAE
+        ### RoutingFreeMoE
         gate_proj_rank (`int`, *optional*, defaults to `hidden_size // 4`):
             Rank of the gating projection for NoAE/AoE MLP.
         gate_norm (`str`, *optional*, defaults to `"l2"`):
@@ -137,11 +137,7 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
         output_gate_scores (`bool`, *optional*, defaults to `False`):
             Whether to output gate scores for analysis.
         n_experts (`int`, *optional*, defaults to `1`):
-            Number of experts in NoAEMoE/AoEMoE.
-        min_token_activate_threshold (`float`, *optional*, defaults to `0.0`):
-            Minimum activation ratio for each expert (for auxiliary loss).
-        max_token_activate_threshold (`float`, *optional*, defaults to `1.0`):
-            Maximum activation ratio for each expert (for auxiliary loss).
+            Number of experts in RoutingFreeMoE.
 
     ```python
     >>> from transformers import RoutingFreeDeepseekV3Model, RoutingFreeDeepseekV3Config
@@ -222,15 +218,12 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
         gate_temperature=1.0,
         output_gate_scores=False,
         n_experts=256,
-        depth_gate_strategy=None,
         ### ReMoE's aux loss
         density_target=0.1, 
         lambda_coef=1e-5,
         alpha_coef=1.2,
         per_expert_aux_loss_coef=0.5,
         per_token_aux_loss_coef=0.5,
-        mlp_iter_layers=None,
-        mlp_iter_times=4,   
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -292,14 +285,11 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
         self.gate_temperature = gate_temperature
         self.output_gate_scores = output_gate_scores
         self.n_experts = n_experts
-        self.depth_gate_strategy = depth_gate_strategy
         self.density_target = density_target
         self.lambda_coef = lambda_coef
         self.alpha_coef = alpha_coef
         self.per_expert_aux_loss_coef = per_expert_aux_loss_coef
         self.per_token_aux_loss_coef = per_token_aux_loss_coef
-        self.mlp_iter_layers = mlp_iter_layers
-        self.mlp_iter_times = mlp_iter_times
 
         super().__init__(
             pad_token_id=pad_token_id,

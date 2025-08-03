@@ -20,7 +20,5 @@
   "gate_act_fn": "relu",
   "gate_threshold": 0.5,
   "output_gate_scores": true,
-  "n_experts": 12,
-  "mlp_iter_layers": [2, 4, 6, 8, 10],
-  "mlp_iter_times": 1
+  "n_experts": 12
 }

@@ -286,7 +286,8 @@ class RoutingFreeDeepseekV3MLP(nn.Module):
         # If output_gate_scores, return a tensor of shape [B, T] with -1s for masked-out tokens
         if self.output_gate_scores:
             gate_score_full = x_flat.new_ones(x_flat.shape[0], dtype=gate_score.dtype) * -float('inf')
-            gate_score_full[idx[gate_mask]] = gate_score_valid  # Fill [B*T] with valid positions [M]
+            if gate_mask.any():
+                gate_score_full[idx[gate_mask]] = gate_score_valid  # Fill [B*T] with valid positions [M]
             gate_score_full = gate_score_full.view(x.shape[0], x.shape[1])
             return mlp_out, gate_score_full
         else:
@@ -578,20 +579,10 @@ class RoutingFreeDeepseekV3DecoderLayer(nn.Module):
         else:
             self.is_moe = False
             self.mlp = DeepseekV3MLP(config)
-            
-        if layer_idx in config.mlp_iter_layers:
-            self.mlp_iter_times = config.mlp_iter_times
-        else:
-            self.mlp_iter_times = 1
-
+        
         self.input_layernorm = DeepseekV3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = DeepseekV3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         
-        self.depth_gate = None
-        self.depth_gate_strategy = config.depth_gate_strategy
-        if self.depth_gate_strategy == "emb":
-            self.depth_gate = nn.Linear(config.hidden_size, 1, bias=False)  # Project to 1 dimension
-            
         self.gate_threshold = config.gate_threshold
         self.density_target = config.density_target
 
@@ -607,7 +598,7 @@ class RoutingFreeDeepseekV3DecoderLayer(nn.Module):
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         output_gate_scores: Optional[bool] = True,
         **kwargs: Unpack[FlashAttentionKwargs],
-    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+    ) -> Tuple[torch.FloatTensor, Optional[torch.FloatTensor], Optional[torch.FloatTensor]]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
 
@@ -624,49 +615,17 @@ class RoutingFreeDeepseekV3DecoderLayer(nn.Module):
             **kwargs,
         )
         hidden_states = residual + hidden_states
-
-        all_expert_gate_scores = () if output_gate_scores and self.is_moe else None 
         # Fully Connected
         hidden_states = self.post_attention_layernorm(hidden_states)
         
-        depth_gate_indices = None
-        if self.depth_gate:
-            depth_gate_scores = self.depth_gate(hidden_states)  # [B, T, 1]
-            depth_gate_scores = depth_gate_scores.squeeze(-1)  # [B, T]
-            # Linearly scale the score to determine number of iterations (0 to mlp_iter_times)
-            # Use sigmoid to bound the output between 0 and 1, then scale to iterations
-            depth_gate_scores = torch.sigmoid(depth_gate_scores) * self.mlp_iter_times  # [B, T]
-            # For inference, round to nearest integer
-            if not self.training:
-                depth_gate_indices = torch.round(depth_gate_scores).long()  # [B, T], values in [0, mlp_iter_times]
-
-        depth_gate_mask = None
-        for iter_idx in range(self.mlp_iter_times):                
-            mlp_out, expert_gate_scores = self.mlp(hidden_states, depth_gate_mask)  # [B, T, H], [B, T, n_experts]
-            hidden_states = hidden_states + mlp_out
-            if output_gate_scores and self.is_moe and expert_gate_scores is not None:
-                all_expert_gate_scores += (expert_gate_scores,)
-
-            if (self.depth_gate_strategy == "est") and (iter_idx < self.mlp_iter_times - 1) and (expert_gate_scores is not None):
-                # Average across experts
-                avg_expert_gate_scores = expert_gate_scores.mean(dim=-1)  # [B, T]
-                # Normalize to mean=0, std=1 per sequence in batch
-                mean_vals = avg_expert_gate_scores.mean(dim=1, keepdim=True)  # [B, 1]
-                std_vals = avg_expert_gate_scores.std(dim=1, keepdim=True)  # [B, 1]
-                normed_scores = (avg_expert_gate_scores - mean_vals) / (std_vals + 1e-6)  # [B, T]
-                # Mask out the most unactivated tokens below -2 sigma for each sequence
-                depth_gate_mask = normed_scores >= -2.0  # [B, T]
-            elif (self.depth_gate_strategy == "emb") and (depth_gate_indices is not None):
-                depth_gate_mask = depth_gate_indices > iter_idx # [B, T]
-
-        if output_gate_scores and self.is_moe:
-            all_expert_gate_scores = torch.stack(all_expert_gate_scores, axis=-1)   # [B, T, n_experts, n_iter]
+        mlp_out, expert_gate_scores = self.mlp(hidden_states, mask = None)  # [B, T, H], [B, T, n_experts]
+        hidden_states = hidden_states + mlp_out
         
         outputs = (hidden_states,)
         if output_attentions:
             outputs += (self_attn_weights,)
         if output_gate_scores:
-            outputs += (all_expert_gate_scores,)
+            outputs += (expert_gate_scores,)
         
         return outputs
 
@@ -1193,13 +1152,9 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
         density_proxy = 0
         density_ratio_per_expert = None
         density_proxy_per_expert = None
-        depth_gated_ratio = 0
-        depth_gated_ratio_per_expert = None
         
         if output_gate_scores and gate_scores is not None:
-            # gate_scores is a list of lists of tensors
-            # First level: number of layers
-            # Second level: number of iterations per layer (1-4)
+            # gate_scores is a list of tensors, one per layer
             # Each tensor has shape [B, T, number_of_experts]
             total_tokens = 0
             gate_probs = []
@@ -1208,18 +1163,15 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
                 if layer_gate_scores is None:
                     continue
                 
-                B, T, n_experts, n_iter = layer_gate_scores.shape
+                B, T, n_experts = layer_gate_scores.shape
                 total_tokens = B * T
                 
                 if total_tokens > 0:
-                    layer_gate_probs = layer_gate_scores # [B, T, n_experts, n_iter]
-                    layer_gate_probs_flat = layer_gate_probs.mean(dim=-1).view(-1, n_experts) # [B*T, n_experts]
+                    layer_gate_probs_flat = layer_gate_scores.view(-1, n_experts) # [B*T, n_experts]
                     gate_probs.append(layer_gate_probs_flat)
                         
             if gate_probs:
                 gate_probs = torch.cat(gate_probs, dim=-1)  # [B*T, L*n_experts]
-                depth_gated_ratio = torch.mean((gate_probs == -float('inf')).float())
-                depth_gated_ratio_per_expert = torch.mean((gate_probs == -float('inf')).float(), dim=0)
                 
                 gate_probs = self.gate_act_fn(gate_probs)
                 gate_probs = gate_probs / self.gate_temperature
@@ -1265,8 +1217,6 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
                 "density_proxy_per_expert": density_proxy_per_expert.detach().cpu().tolist() if density_proxy_per_expert is not None else None,
                 "per_expert_aux_loss": per_expert_aux_loss.item() if isinstance(per_expert_aux_loss, torch.Tensor) else per_expert_aux_loss,
                 "per_token_aux_loss": per_token_aux_loss.item() if isinstance(per_token_aux_loss, torch.Tensor) else per_token_aux_loss,
-                "depth_gated_ratio": depth_gated_ratio.item() if 'depth_gated_ratio' in locals() else -1.0,
-                "depth_gated_ratio_per_expert": depth_gated_ratio_per_expert.detach().cpu().tolist() if depth_gated_ratio_per_expert is not None else None,
             }
             
         
