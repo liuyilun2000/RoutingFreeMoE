@@ -14,21 +14,21 @@ GATE_TEMPERATURE=1.0
 GATE_THRESHOLD=0.5
 DENSITY_TARGET=0.25
 LAMBDA_COEF=1e-8
-ALPHA_COEF=1.2
+ETA_COEF=0.2
 PER_EXPERT_AUX_LOSS_COEF=0.5
 PER_TOKEN_AUX_LOSS_COEF=0.5
 
 config="${n_hidden_layers}L_${moe_intermediate_size}D"
-RUN_NAME="${config}x${n_experts}E_temp_${GATE_TEMPERATURE}_thres_${GATE_THRESHOLD}_density_${DENSITY_TARGET}_lambda_${LAMBDA_COEF}_alpha_${ALPHA_COEF}_aux_[E${PER_EXPERT_AUX_LOSS_COEF}_T${PER_TOKEN_AUX_LOSS_COEF}]"
+RUN_NAME="${config}x${n_experts}E_temp_${GATE_TEMPERATURE}_thres_${GATE_THRESHOLD}_density_${DENSITY_TARGET}_lambda_${LAMBDA_COEF}_eta_${ETA_COEF}_aux_[E${PER_EXPERT_AUX_LOSS_COEF}_T${PER_TOKEN_AUX_LOSS_COEF}]"
 
-MODEL_DIR=${1:-./init/DeepSeekV3NoAE_${config}}
+MODEL_DIR=${1:-./init/RoutingFreeDeepseekV3_${config}}
 OUTPUT_DIR=${4:-./output/${RUN_NAME}}
 DATASET_NAME=${5:-roneneldan/TinyStories}
 EPOCHS=${6:-1}
 LR=${7:-5e-4}
 BATCH_SIZE=${8:-32}
 GRAD_ACCUM=${9:-2}
-WANDB_PROJECT=${10:-deepseek-v3-noae}
+WANDB_PROJECT=${10:-routing-free-deepseek-v3}
 WANDB_RUN=${11:-${RUN_NAME}}
 
 echo "Running with the following parameters:"
@@ -42,7 +42,7 @@ echo "GATE_TEMPERATURE: $GATE_TEMPERATURE"
 echo "GATE_THRESHOLD: $GATE_THRESHOLD"
 echo "DENSITY_TARGET: $DENSITY_TARGET"
 echo "LAMBDA_COEF: $LAMBDA_COEF"
-echo "ALPHA_COEF: $ALPHA_COEF"
+echo "ETA_COEF: $ETA_COEF"
 echo "PER_EXPERT_AUX_LOSS_COEF: $PER_EXPERT_AUX_LOSS_COEF"
 echo "PER_TOKEN_AUX_LOSS_COEF: $PER_TOKEN_AUX_LOSS_COEF"
 echo "DATASET_NAME: $DATASET_NAME"
@@ -64,7 +64,7 @@ torchrun --nproc_per_node 4 pretrain.py \
   --gate-threshold "$GATE_THRESHOLD" \
   --density-target "$DENSITY_TARGET" \
   --lambda-coef "$LAMBDA_COEF" \
-  --alpha-coef "$ALPHA_COEF" \
+  --eta-coef "$ETA_COEF" \
   --per-expert-aux-loss-coef "$PER_EXPERT_AUX_LOSS_COEF" \
   --per-token-aux-loss-coef "$PER_TOKEN_AUX_LOSS_COEF" \
   --epochs "$EPOCHS" \

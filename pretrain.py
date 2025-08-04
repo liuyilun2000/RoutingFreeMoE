@@ -93,7 +93,7 @@ def train(
     gate_threshold: float = 0.5,
     density_target: float = 0.1,
     lambda_coef: float = 1e-5,
-    alpha_coef: float = 1.2,
+    eta_coef: float = 1.2,
     per_expert_aux_loss_coef: float = 0.5,
     per_token_aux_loss_coef: float = 0.5,
     # Training hyperparams
@@ -151,7 +151,7 @@ def train(
     config.gate_threshold = gate_threshold
     config.density_target = density_target
     config.lambda_coef = lambda_coef
-    config.alpha_coef = alpha_coef
+    config.eta_coef = eta_coef
     config.per_expert_aux_loss_coef = per_expert_aux_loss_coef
     config.per_token_aux_loss_coef = per_token_aux_loss_coef
     model = RoutingFreeDeepseekV3ForCausalLM.from_pretrained(
@@ -348,8 +348,8 @@ def main():
                       help="Density target")
     parser.add_argument("--lambda-coef", type=float, default=1e-5,
                       help="Lambda coefficient")
-    parser.add_argument("--alpha-coef", type=float, default=1.2,
-                      help="Alpha coefficient")
+    parser.add_argument("--eta-coef", type=float, default=1.2,
+                      help="Eta coefficient")
     parser.add_argument("--per-expert-aux-loss-coef", type=float, default=0.5,
                       help="Per expert auxiliary loss coefficient")
     parser.add_argument("--per-token-aux-loss-coef", type=float, default=0.5,
@@ -385,7 +385,7 @@ def main():
         gate_threshold=args.gate_threshold,
         density_target=args.density_target,
         lambda_coef=args.lambda_coef,
-        alpha_coef=args.alpha_coef,
+        eta_coef=args.eta_coef,
         per_expert_aux_loss_coef=args.per_expert_aux_loss_coef,
         per_token_aux_loss_coef=args.per_token_aux_loss_coef,
         per_device_batch_size=args.per_device_batch_size,

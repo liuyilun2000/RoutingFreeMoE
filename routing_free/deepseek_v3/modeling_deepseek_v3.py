@@ -210,12 +210,15 @@ class RoutingFreeDeepseekV3MLP(nn.Module):
         # Initialize gate_bias to the negative expected norm of the gate_hidden vector -E[||gate_hidden||],
         # so that the gating threshold is meaningful at initialization.
         if getattr(config, "gate_bias", None):
+            self.gate_bias = nn.Parameter(torch.full((1,), -1e-6))
+            '''
             if getattr(config, "gate_norm", "l2") == "l2":
                 # For L2 norm, the expected norm of a standard normal vector of size d is approximately sqrt(d)
                 self.gate_bias = nn.Parameter(torch.full((1,), -math.sqrt(self.gate_proj_rank)))
             elif getattr(config, "gate_norm", "l2") == "l1":
                 # For L1 norm, the expected norm is d * sqrt(2/pi)
                 self.gate_bias = nn.Parameter(torch.full((1,), -self.gate_proj_rank * math.sqrt(2 / math.pi)))
+            '''
         else:   
             self.gate_bias = None
         self.gate_act_fn = ACT2FN[config.gate_act_fn if getattr(config, "gate_act_fn", None) else "linear"]
@@ -236,7 +239,6 @@ class RoutingFreeDeepseekV3MLP(nn.Module):
 
     def forward(self, x, mask=None):
         # [FIXME] 
-        print(x,mask)
         # x: [B, T, H] as Batch_size, seq_len, Hidden_size
         # mask: [B, T] or None
         # If mask is provided, only compute for tokens where mask is True, else output is zero
@@ -262,20 +264,20 @@ class RoutingFreeDeepseekV3MLP(nn.Module):
         # Compute gate_hidden for gating decision, only for x_valid and masked indices
         gate_hidden = self.gate_proj_A(x_valid)  # [N, gate_proj_rank]
         gate_score = self.gate_norm(gate_hidden)  # [N]
-        print(f"gate_score: {gate_score}")
+        #print(f"gate_score: {gate_score}")
         if self.gate_scale is not None:
             gate_score = gate_score * self.gate_scale
         if self.gate_bias is not None:
             gate_score = gate_score + self.gate_bias
-        print(f"gate_score: {gate_score}")
+        #print(f"gate_score: {gate_score}")
         gate_score_act = self.gate_act_fn(gate_score)  # [N]
-        print(f"gate_score_act: {gate_score_act}")
+        #print(f"gate_score_act: {gate_score_act}")
         gate_score_act = gate_score_act / self.gate_temperature
-        print(f"gate_score_act: {gate_score_act}")
+        #print(f"gate_score_act: {gate_score_act}")
 
         # Create mask: True for tokens to compute, False for tokens to skip
         gate_mask = (gate_score_act >= self.gate_threshold)  # [N]
-        print(f"gate_mask: {gate_mask}")
+        #print(f"gate_mask: {gate_mask}")
 
         # Only process tokens where mask is True
         if gate_mask.any():
@@ -1161,7 +1163,7 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
         density_proxy_per_expert = None
         
         if output_gate_scores and gate_scores is not None:
-            print(gate_scores)
+            #print(gate_scores)
             # gate_scores is a list of tensors, one per layer
             # Each tensor has shape [B, T, number_of_experts]
             total_tokens = 0
