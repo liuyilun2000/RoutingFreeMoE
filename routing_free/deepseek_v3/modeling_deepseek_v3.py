@@ -235,6 +235,7 @@ class RoutingFreeDeepseekV3MLP(nn.Module):
             return lambda x: torch.norm(x, p=2, dim=-1)  # Default to L2
 
     def forward(self, x, mask=None):
+        print(x,mask)
         # x: [B, T, H] as Batch_size, seq_len, Hidden_size
         # mask: [B, T] or None
         # If mask is provided, only compute for tokens where mask is True, else output is zero
@@ -260,15 +261,20 @@ class RoutingFreeDeepseekV3MLP(nn.Module):
         # Compute gate_hidden for gating decision, only for x_valid and masked indices
         gate_hidden = self.gate_proj_A(x_valid)  # [N, gate_proj_rank]
         gate_score = self.gate_norm(gate_hidden)  # [N]
+        print(f"gate_score: {gate_score}")
         if self.gate_scale is not None:
             gate_score = gate_score * self.gate_scale
         if self.gate_bias is not None:
             gate_score = gate_score + self.gate_bias
+        print(f"gate_score: {gate_score}")
         gate_score_act = self.gate_act_fn(gate_score)  # [N]
+        print(f"gate_score_act: {gate_score_act}")
         gate_score_act = gate_score_act / self.gate_temperature
+        print(f"gate_score_act: {gate_score_act}")
 
         # Create mask: True for tokens to compute, False for tokens to skip
         gate_mask = (gate_score_act >= self.gate_threshold)  # [N]
+        print(f"gate_mask: {gate_mask}")
 
         # Only process tokens where mask is True
         if gate_mask.any():
@@ -1035,7 +1041,7 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
         self.gate_threshold = getattr(config, "gate_threshold", 0.5)
         self.density_target = getattr(config, "density_target", 0.1)
         self.register_buffer("lambda_coef", torch.tensor(getattr(config, "lambda_coef", 1e-6)))
-        self.alpha_coef = getattr(config, "alpha_coef", 1.2)
+        self.eta_coef = getattr(config, "eta_coef", 1.2)
         self.per_expert_aux_loss_coef = getattr(config, "per_expert_aux_loss_coef", 0.5)
         self.per_token_aux_loss_coef = getattr(config, "per_token_aux_loss_coef", 0.5)
         
@@ -1154,6 +1160,7 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
         density_proxy_per_expert = None
         
         if output_gate_scores and gate_scores is not None:
+            print(gate_scores)
             # gate_scores is a list of tensors, one per layer
             # Each tensor has shape [B, T, number_of_experts]
             total_tokens = 0
@@ -1198,7 +1205,7 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
         
         if is_training:
             loss += aux_loss if aux_loss else 0
-            self.lambda_coef = self.lambda_coef * (self.alpha_coef ** torch.sign(density - self.density_target))
+            self.lambda_coef = self.lambda_coef * (1 + self.eta_coef * (density - self.density_target) ** 2) ** torch.sign(density - self.density_target)
             self.lambda_coef = torch.clamp(self.lambda_coef, max=1.0)
             self.sync_lambda_coef()
         

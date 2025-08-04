@@ -18,7 +18,7 @@
   "gate_scale": true,
   "gate_bias": true,
   "gate_act_fn": "relu",
-  "gate_threshold": 0.5,
+  "gate_threshold": 0.2,
   "output_gate_scores": true,
   "n_experts": 12
 }

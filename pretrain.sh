@@ -10,9 +10,6 @@ source /hkfs/home/project/hk-project-p0022189/hgf_mxv5488/miniconda3/bin/activat
 n_hidden_layers=12
 n_experts=12
 moe_intermediate_size=128
-mlp_iter_layers=(2 4 6 8 10)
-mlp_iter_times=4
-DEPTH_GATE_STRATEGY=None
 GATE_TEMPERATURE=1.0
 GATE_THRESHOLD=0.5
 DENSITY_TARGET=0.25
@@ -22,7 +19,7 @@ PER_EXPERT_AUX_LOSS_COEF=0.5
 PER_TOKEN_AUX_LOSS_COEF=0.5
 
 config="${n_hidden_layers}L_${moe_intermediate_size}D"
-RUN_NAME="${config}x${n_experts}E_iter[${mlp_iter_layers[@]}]x${mlp_iter_times}_depth_${DEPTH_GATE_STRATEGY}_temp_${GATE_TEMPERATURE}_thres_${GATE_THRESHOLD}_density_${DENSITY_TARGET}_lambda_${LAMBDA_COEF}_alpha_${ALPHA_COEF}_aux_[E${PER_EXPERT_AUX_LOSS_COEF}_T${PER_TOKEN_AUX_LOSS_COEF}]"
+RUN_NAME="${config}x${n_experts}E_temp_${GATE_TEMPERATURE}_thres_${GATE_THRESHOLD}_density_${DENSITY_TARGET}_lambda_${LAMBDA_COEF}_alpha_${ALPHA_COEF}_aux_[E${PER_EXPERT_AUX_LOSS_COEF}_T${PER_TOKEN_AUX_LOSS_COEF}]"
 
 MODEL_DIR=${1:-./init/DeepSeekV3NoAE_${config}}
 OUTPUT_DIR=${4:-./output/${RUN_NAME}}
@@ -41,9 +38,6 @@ echo "OUTPUT_DIR: $OUTPUT_DIR"
 echo "N_HIDDEN_LAYERS: $n_hidden_layers"
 echo "N_EXPERTS: $n_experts"
 echo "MOE_INTERMEDIATE_SIZE: $moe_intermediate_size"
-echo "MLP_ITER_LAYERS: $mlp_iter_layers"
-echo "MLP_ITER_TIMES: $mlp_iter_times"
-echo "DEPTH_GATE_STRATEGY: $DEPTH_GATE_STRATEGY"
 echo "GATE_TEMPERATURE: $GATE_TEMPERATURE"
 echo "GATE_THRESHOLD: $GATE_THRESHOLD"
 echo "DENSITY_TARGET: $DENSITY_TARGET"
@@ -66,9 +60,6 @@ torchrun --nproc_per_node 4 pretrain.py \
   --n-hidden-layers "$n_hidden_layers" \
   --n-experts "$n_experts" \
   --moe-intermediate-size "$moe_intermediate_size" \
-  --mlp-iter-layers "${mlp_iter_layers[@]}" \
-  --mlp-iter-times "$mlp_iter_times" \
-  --depth-gate-strategy "$DEPTH_GATE_STRATEGY" \
   --gate-temperature "$GATE_TEMPERATURE" \
   --gate-threshold "$GATE_THRESHOLD" \
   --density-target "$DENSITY_TARGET" \

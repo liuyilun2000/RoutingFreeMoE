@@ -221,7 +221,7 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
         ### ReMoE's aux loss
         density_target=0.1, 
         lambda_coef=1e-5,
-        alpha_coef=1.2,
+        eta_coef=1.2,
         per_expert_aux_loss_coef=0.5,
         per_token_aux_loss_coef=0.5,
         **kwargs,
@@ -287,7 +287,7 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
         self.n_experts = n_experts
         self.density_target = density_target
         self.lambda_coef = lambda_coef
-        self.alpha_coef = alpha_coef
+        self.eta_coef = eta_coef
         self.per_expert_aux_loss_coef = per_expert_aux_loss_coef
         self.per_token_aux_loss_coef = per_token_aux_loss_coef
 
