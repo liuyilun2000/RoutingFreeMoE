@@ -235,6 +235,7 @@ class RoutingFreeDeepseekV3MLP(nn.Module):
             return lambda x: torch.norm(x, p=2, dim=-1)  # Default to L2
 
     def forward(self, x, mask=None):
+        # [FIXME] 
         print(x,mask)
         # x: [B, T, H] as Batch_size, seq_len, Hidden_size
         # mask: [B, T] or None
