@@ -86,9 +86,6 @@ def train(
     n_hidden_layers: int = 12,
     n_experts: int = 24,
     moe_intermediate_size: int = 128,
-    mlp_iter_layers: List[int] = [2, 4, 6, 8, 10],
-    mlp_iter_times: int = 1,
-    depth_gate_strategy: str = None,
     gate_temperature: float = 1.0,
     gate_threshold: float = 0.5,
     density_target: float = 0.1,
@@ -144,9 +141,6 @@ def train(
     config.n_experts = n_experts
     if config.moe_intermediate_size != moe_intermediate_size:
         raise ValueError(f"MOE intermediate size in config ({config.moe_intermediate_size}) does not match the provided value ({moe_intermediate_size})")
-    config.mlp_iter_layers = mlp_iter_layers
-    config.mlp_iter_times = mlp_iter_times
-    config.depth_gate_strategy = depth_gate_strategy
     config.gate_temperature = gate_temperature
     config.gate_threshold = gate_threshold
     config.density_target = density_target
@@ -329,17 +323,6 @@ def main():
                       help="Number of experts")
     parser.add_argument("--moe-intermediate-size", type=int, default=128,
                       help="MOE intermediate size")
-    parser.add_argument(
-        "--mlp-iter-layers",
-        type=int,
-        nargs='+',
-        default=[2, 4, 6, 8, 10],
-        help="MLP iteration layers"
-    )
-    parser.add_argument("--mlp-iter-times", type=int, default=1,
-                      help="MLP iteration times")
-    parser.add_argument("--depth-gate-strategy", type=str, default=None,
-                      help="Depth gate strategy, emb or est, default is None")
     parser.add_argument("--gate-temperature", type=float, default=1.0,
                       help="Gate temperature")
     parser.add_argument("--gate-threshold", type=float, default=0.5,
@@ -379,8 +362,6 @@ def main():
         n_experts=args.n_experts,
         moe_intermediate_size=args.moe_intermediate_size,
         mlp_iter_layers=args.mlp_iter_layers,
-        mlp_iter_times=args.mlp_iter_times,
-        depth_gate_strategy=args.depth_gate_strategy,
         gate_temperature=args.gate_temperature,
         gate_threshold=args.gate_threshold,
         density_target=args.density_target,
