@@ -56,7 +56,6 @@ tokenizer.padding_side = 'right' if tokenizer.padding_side is None else tokenize
 # Initialize model config with correct vocab size
 print(f"\nTokenizer vocabulary size: {len(tokenizer)}")
 
-#config = DeepseekV3NoAEConfig.from_pretrained("120M_1iter_12exp_256dim.config.json")
 config = RoutingFreeDeepseekV3Config.from_pretrained("120M.config.json")
 
 

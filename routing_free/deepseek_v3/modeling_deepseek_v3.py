@@ -48,7 +48,6 @@ _CONFIG_FOR_DOC = "RoutingFreeDeepseekV3Config"
 def balancing_loss_func(
     probs: torch.Tensor,
     mask: torch.Tensor,
-    density_target: float = 0.1,
     dim: Optional[int] = None
 ) -> Union[torch.Tensor, int]:
     r"""
@@ -65,14 +64,11 @@ def balancing_loss_func(
         mask:
             The activated mask of the gate, should be a tuple of model.config.num_hidden_layers tensors of
             shape [num_tokens, num_experts].
-        density_target:
-            The target density.
         dim:
             The dimension to compute the mean over.
             If dim is None, the balancing loss is computed over both dimensions.
             If dim is 0, the balancing loss is computed over the expert dimension.
             If dim is 1, the balancing loss is computed over the token dimension.
-
     Returns:
         The auxiliary loss.
     """
@@ -82,28 +78,20 @@ def balancing_loss_func(
     assert dim in [0, 1, None], "dim must be 0, 1 or None (default), for balancing over experts, tokens, or both"
     assert probs.shape == mask.shape, "probs and mask must have the same shape"
     
-    '''
-    if isinstance(probs, tuple):
-        compute_device = probs[0].device
-        probs = torch.cat([layer_gate.to(compute_device) for layer_gate in probs], dim=0)
-    if isinstance(mask, tuple):
-        compute_device = mask[0].device
-        mask = torch.cat([layer_gate.to(compute_device) for layer_gate in mask], dim=0)
-    '''
     # Compute the fraction of {tokens routed to each expert} or {experts routed to each token} (non-differentiable)
     density = torch.mean(mask.float(), dim=dim)
-    density_ratio = density / density_target
 
     # Compute the fraction of probability mass assigned {to each expert} or {to each token} (differentiable)
     density_proxy = torch.mean(probs, dim=dim)
 
-    assert density.shape == density_proxy.shape, "density and density_proxy must have the same shape"
-    num_elements = density.shape[0] if dim else 1
-    
+    assert len(density.shape) == 1, "density must be a 1D tensor"
+    assert len(density_proxy.shape) == 1, "density_proxy must be a 1D tensor"
+    assert density.shape[0] == density_proxy.shape[0], "density and density_proxy must have the same number of elements"
+        
     # density, density_proxy: [num_elements] {num_experts if dim=0} or {num_tokens if dim=1} or {1 if dim=None}
     # both desired to have uniform allocation (1/num_elements) across all elements
     # two vectors will be pushed towards uniform allocation when the dot product is minimized
-    loss = torch.sum(density_ratio * density_proxy) / num_elements 
+    loss = torch.mean(density * density_proxy) 
     return loss
 
 
@@ -270,14 +258,10 @@ class RoutingFreeDeepseekV3MLP(nn.Module):
         if self.gate_bias is not None:
             gate_score = gate_score + self.gate_bias
         #print(f"gate_score: {gate_score}")
-        gate_score_act = self.gate_act_fn(gate_score)  # [N]
-        #print(f"gate_score_act: {gate_score_act}")
-        gate_score_act = gate_score_act / self.gate_temperature
-        #print(f"gate_score_act: {gate_score_act}")
+        gate_score = self.gate_act_fn(gate_score)  # [N]
 
         # Create mask: True for tokens to compute, False for tokens to skip
-        gate_mask = (gate_score_act >= self.gate_threshold)  # [N]
-        #print(f"gate_mask: {gate_mask}")
+        gate_mask = (gate_score >= self.gate_threshold / self.gate_temperature)  # [N]
 
         # Only process tokens where mask is True
         if gate_mask.any():
@@ -1047,6 +1031,7 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
         self.eta_coef = getattr(config, "eta_coef", 1.2)
         self.per_expert_aux_loss_coef = getattr(config, "per_expert_aux_loss_coef", 0.5)
         self.per_token_aux_loss_coef = getattr(config, "per_token_aux_loss_coef", 0.5)
+        self.n_experts = getattr(config, "n_experts", 1)
         
         # Initialize weights and apply final processing
         self.post_init()
@@ -1189,16 +1174,16 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
                 
                 density = torch.mean(gate_mask)
                 density_ratio = density / self.density_target
-                density_ratio_per_expert = torch.mean(gate_mask, dim=0) / self.density_target
+                density_per_expert = torch.mean(gate_mask, dim=0)
                 #density_per_token = torch.mean(gate_mask, dim=1)
                 density_proxy = torch.mean(gate_probs)
                 density_proxy_per_expert = torch.mean(gate_probs, dim=0)
                 #density_proxy_per_token = torch.mean(gate_probs, dim=1)
 
                 if self.per_expert_aux_loss_coef > 0:
-                    per_expert_aux_loss = balancing_loss_func(gate_probs, gate_mask, dim=0, density_target=self.density_target)
+                    per_expert_aux_loss = balancing_loss_func(gate_probs, gate_mask, dim=0)
                 if self.per_token_aux_loss_coef > 0:
-                    per_token_aux_loss = balancing_loss_func(gate_probs, gate_mask, dim=1, density_target=self.density_target)
+                    per_token_aux_loss = balancing_loss_func(gate_probs, gate_mask, dim=1)
                 
                 reg_loss = (
                     per_expert_aux_loss * self.per_expert_aux_loss_coef + 
@@ -1222,12 +1207,19 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
                 "lambda_coef": self.lambda_coef.item(),
                 "density": density.item() if 'density' in locals() else -1.0,
                 "density_ratio": density_ratio.item() if 'density_ratio' in locals() else -1.0,
-                "density_ratio_per_expert": density_ratio_per_expert.detach().cpu().tolist() if density_ratio_per_expert is not None else None,
                 "density_proxy": density_proxy.item() if 'density_proxy' in locals() else -1.0,
-                "density_proxy_per_expert": density_proxy_per_expert.detach().cpu().tolist() if density_proxy_per_expert is not None else None,
                 "per_expert_aux_loss": per_expert_aux_loss.item() if isinstance(per_expert_aux_loss, torch.Tensor) else per_expert_aux_loss,
                 "per_token_aux_loss": per_token_aux_loss.item() if isinstance(per_token_aux_loss, torch.Tensor) else per_token_aux_loss,
             }
+            # Add per-expert density and proxy entries for each expert in each layer
+            if density_per_expert is not None and density_proxy_per_expert is not None:
+                # density_per_expert and density_proxy_per_expert are 1D tensors of length L * n_experts
+                n_layers = density_per_expert.numel() // self.n_experts
+                for l in range(n_layers):
+                    for e in range(self.n_experts):
+                        idx = l * self.n_experts + e
+                        aux_loss_dict[f"density_expert_L{l}E{e}"] = float(density_per_expert[idx].detach().cpu())
+                        aux_loss_dict[f"density_proxy_expert_L{l}E{e}"] = float(density_proxy_per_expert[idx].detach().cpu())
             
         
         return MoeCausalLMOutputWithPast(
