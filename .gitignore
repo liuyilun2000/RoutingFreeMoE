@@ -179,6 +179,10 @@ checkpoints/
 wandb/
 experiment/
 output/
+output_baseline/
+init/
+init_baseline/
+
 *.safetensors
 *.pt
 *.out

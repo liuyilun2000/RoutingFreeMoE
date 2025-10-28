@@ -290,6 +290,10 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
         self.eta_coef = eta_coef
         self.per_expert_aux_loss_coef = per_expert_aux_loss_coef
         self.per_token_aux_loss_coef = per_token_aux_loss_coef
+        
+        # Add missing attributes for compatibility
+        self.output_attentions = False
+        self.output_hidden_states = False
 
         super().__init__(
             pad_token_id=pad_token_id,

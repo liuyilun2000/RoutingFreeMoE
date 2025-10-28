@@ -32,22 +32,15 @@ from transformers import (
     AutoProcessor,
     AutoTokenizer,
 )
+from transformers import Trainer
 from transformers import DataCollatorForLanguageModeling
+from transformers import DeepseekV3ForCausalLM, DeepseekV3Config
 
-from routing_free.deepseek_v3.configuration_deepseek_v3 import RoutingFreeDeepseekV3Config
-from routing_free.deepseek_v3.modeling_deepseek_v3 import (
-    RoutingFreeDeepseekV3Model,
-    RoutingFreeDeepseekV3ForCausalLM,
-)
 
 from utils import *
 from train_utils import *
 
 import numpy as np
-
-AutoConfig.register("routing_free_deepseek_v3", RoutingFreeDeepseekV3Config)
-AutoModel.register(RoutingFreeDeepseekV3Config, RoutingFreeDeepseekV3Model)
-AutoModelForCausalLM.register(RoutingFreeDeepseekV3Config, RoutingFreeDeepseekV3ForCausalLM)
 
 base_model = "deepseek-ai/DeepSeek-V3"
 tokenizer_model = "EleutherAI/gpt-neo-125M"
@@ -84,18 +77,14 @@ def train(
     preprocessing_cache_dir: str = "../mapped_datasets",
     # Model config params
     n_hidden_layers: int = 12,
-    n_experts: int = 24,
+    n_shared_experts: int = 1,
+    n_routed_experts: int = 23,
     moe_intermediate_size: int = 128,
-    gate_temperature: float = 1.0,
-    gate_threshold: float = 0.5,
-    density_target: float = 0.1,
-    lambda_coef: float = 1e-5,
-    eta_coef: float = 1.2,
-    per_expert_aux_loss_coef: float = 0.5,
-    per_token_aux_loss_coef: float = 0.5,
+    #mlp_iter_layers: List[int] = [2, 4, 6, 8, 10],
+    #mlp_iter_times: int = 1,
     # Training hyperparams
-    per_device_batch_size: int = 32,
-    gradient_accumulation_steps: int = 2,
+    per_device_batch_size: int = 16,
+    gradient_accumulation_steps: int = 4,
     n_epochs: int = 1,
     learning_rate: float = 1e-3,
     weight_decay: float = 0.01,
@@ -113,9 +102,6 @@ def train(
     n_workers: int = 32,
     resume_from_checkpoint: str = None, 
 ):
-    # Set debug environment variable for distributed training issues
-    os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
-    
     # Initialize DDP
     local_rank = int(os.environ.get("LOCAL_RANK", -1))
     world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -132,23 +118,23 @@ def train(
         os.environ["WANDB_PROJECT"]=wandb_project
     # Load model and tokenizer
     print(f"Rank {local_rank} / {world_size} : {torch.cuda.mem_get_info()}")
-    config = RoutingFreeDeepseekV3Config.from_pretrained(model_dir)
+    config = DeepseekV3Config.from_pretrained(model_dir)
     config.output_gate_scores = True
     if config.n_hidden_layers != n_hidden_layers:
         raise ValueError(f"Number of hidden layers in config ({config.n_hidden_layers}) does not match the provided value ({n_hidden_layers})")
-    if config.n_experts < n_experts:
-        raise ValueError(f"Number of experts in config ({config.n_experts}) is less than the provided value ({n_experts})")
-    config.n_experts = n_experts
+    if config.n_shared_experts < n_shared_experts:
+        raise ValueError(f"Number of shared experts in config ({config.n_shared_experts}) is less than the provided value ({n_shared_experts})")
+    config.n_shared_experts = n_shared_experts
+    if config.n_routed_experts < n_routed_experts:
+        raise ValueError(f"Number of routed experts in config ({config.n_routed_experts}) is less than the provided value ({n_routed_experts})")
+    config.n_routed_experts = n_routed_experts
     if config.moe_intermediate_size != moe_intermediate_size:
         raise ValueError(f"MOE intermediate size in config ({config.moe_intermediate_size}) does not match the provided value ({moe_intermediate_size})")
-    config.gate_temperature = gate_temperature
-    config.gate_threshold = gate_threshold
-    config.density_target = density_target
-    config.lambda_coef = lambda_coef
-    config.eta_coef = eta_coef
-    config.per_expert_aux_loss_coef = per_expert_aux_loss_coef
-    config.per_token_aux_loss_coef = per_token_aux_loss_coef
-    model = RoutingFreeDeepseekV3ForCausalLM.from_pretrained(
+    #config.mlp_iter_layers = mlp_iter_layers
+    #config.mlp_iter_times = mlp_iter_times
+    if local_rank <= 0:
+        print(config)
+    model = DeepseekV3ForCausalLM.from_pretrained(
         model_dir,
         config=config,
         torch_dtype=torch.bfloat16 if bf16 else torch.float32,
@@ -156,8 +142,6 @@ def train(
         #device_map='cuda'
     )
     model.config.use_cache = False
-    if local_rank <= 0:
-        print(model.config)
     
     if world_size > 1 and local_rank != -1:
         model = model.to(device)
@@ -165,8 +149,11 @@ def train(
             model,
             device_ids=[local_rank],
             output_device=local_rank,
-            find_unused_parameters=True  # Enable to handle unused parameters
+            find_unused_parameters=False  # Important for performance
         )
+            
+    print(local_rank, model)
+    print_trainable_parameters(model)
 
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
     tokenizer.pad_token = tokenizer.eos_token
@@ -177,7 +164,7 @@ def train(
         if os.path.isdir(checkpoint_path):
             if local_rank <= 0:
                 print(f"Loading checkpoint from directory: {checkpoint_path}")
-            model = RoutingFreeDeepseekV3ForCausalLM.from_pretrained(
+            model = DeepseekV3ForCausalLM.from_pretrained(
                 checkpoint_path,
                 config=config,
                 torch_dtype=torch.bfloat16 if bf16 else torch.float32,
@@ -238,7 +225,6 @@ def train(
         print(f"Total examples: {total_examples}")
         print(f"Number of epochs: {n_epochs}")
         print(f"Max steps: {max_steps} | not used in trainer")
-        print(f"Model: {model}")
         print("============================\n")
     
     # Prepare training arguments
@@ -285,7 +271,7 @@ def train(
 
     
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    trainer = AuxLossTrainer(
+    trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
@@ -319,24 +305,12 @@ def main():
                       help="Output directory")
     parser.add_argument("--n-hidden-layers", type=int, default=12,
                       help="Number of hidden layers")
-    parser.add_argument("--n-experts", type=int, default=24,
-                      help="Number of experts")
+    parser.add_argument("--n-shared-experts", type=int, default=1,
+                      help="Number of shared experts")
+    parser.add_argument("--n-routed-experts", type=int, default=23,
+                      help="Number of routed experts")
     parser.add_argument("--moe-intermediate-size", type=int, default=128,
                       help="MOE intermediate size")
-    parser.add_argument("--gate-temperature", type=float, default=1.0,
-                      help="Gate temperature")
-    parser.add_argument("--gate-threshold", type=float, default=0.5,
-                      help="Gate threshold")
-    parser.add_argument("--density-target", type=float, default=0.1,
-                      help="Density target")
-    parser.add_argument("--lambda-coef", type=float, default=1e-5,
-                      help="Lambda coefficient")
-    parser.add_argument("--eta-coef", type=float, default=1.2,
-                      help="Eta coefficient")
-    parser.add_argument("--per-expert-aux-loss-coef", type=float, default=0.5,
-                      help="Per expert auxiliary loss coefficient")
-    parser.add_argument("--per-token-aux-loss-coef", type=float, default=0.5,
-                      help="Per token auxiliary loss coefficient")
     parser.add_argument("--epochs", type=int, default=1,
                       help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-3,
@@ -360,15 +334,9 @@ def main():
         dataset_name=args.dataset_name,
         output_dir=args.output_dir,
         n_hidden_layers=args.n_hidden_layers,
-        n_experts=args.n_experts,
+        n_shared_experts=args.n_shared_experts,
+        n_routed_experts=args.n_routed_experts,
         moe_intermediate_size=args.moe_intermediate_size,
-        gate_temperature=args.gate_temperature,
-        gate_threshold=args.gate_threshold,
-        density_target=args.density_target,
-        lambda_coef=args.lambda_coef,
-        eta_coef=args.eta_coef,
-        per_expert_aux_loss_coef=args.per_expert_aux_loss_coef,
-        per_token_aux_loss_coef=args.per_token_aux_loss_coef,
         per_device_batch_size=args.per_device_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         n_epochs=args.epochs,
