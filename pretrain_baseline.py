@@ -38,33 +38,12 @@ from transformers import DeepseekV3ForCausalLM, DeepseekV3Config
 
 
 from utils import *
-from train_utils import *
+from train_utils import preprocess_function_factory, preprocess_and_cache_dataset
 
 import numpy as np
 
 base_model = "deepseek-ai/DeepSeek-V3"
 tokenizer_model = "EleutherAI/gpt-neo-125M"
-
-
-
-# Get tokenizer first to determine vocab size
-tokenizer = AutoTokenizer.from_pretrained(tokenizer_model)
-
-def preprocess_function_factory(tokenizer, max_length):
-    def preprocess_function(examples):
-        outputs = tokenizer(
-            examples['text'],
-            truncation=True,
-            max_length=max_length,
-            padding='max_length',
-            return_tensors='pt'
-        )
-        return {
-            'input_ids': [x.tolist() for x in outputs['input_ids']],
-            'attention_mask': [x.tolist() for x in outputs['attention_mask']],
-            'labels': [x.tolist() for x in outputs['input_ids']],
-        }
-    return preprocess_function
 
 
 
@@ -75,6 +54,7 @@ def train(
     dataset_name: str = "roneneldan/TinyStories",
     output_dir: str = "./output",
     preprocessing_cache_dir: str = "../mapped_datasets",
+    hf_cache_dir: str = None,
     # Model config params
     n_hidden_layers: int = 12,
     n_shared_experts: int = 1,
@@ -172,7 +152,10 @@ def train(
             )
 
     # Prepare dataset splits
-    dataset = load_dataset(dataset_name, num_proc=n_workers)
+    load_dataset_kwargs = {"num_proc": n_workers}
+    if hf_cache_dir is not None:
+        load_dataset_kwargs["cache_dir"] = hf_cache_dir
+    dataset = load_dataset(dataset_name, **load_dataset_kwargs)
     split_dataset = dataset["train"].train_test_split(test_size=test_size, seed=2357, shuffle=True)
     if local_rank <= 0:
         print(split_dataset)
@@ -327,6 +310,10 @@ def main():
                       help="Per device batch size")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4,
                       help="Number of gradient accumulation steps")
+    parser.add_argument("--preprocessing_cache_dir", type=str, default="../mapped_datasets",
+                      help="Directory for caching preprocessed datasets")
+    parser.add_argument("--hf-cache-dir", type=str, default=None,
+                      help="Directory for Hugging Face dataset cache")
     args = parser.parse_args()
     
     train(
@@ -345,6 +332,8 @@ def main():
         wandb_run_name=args.wandb_run,
         bf16=args.bf16,
         resume_from_checkpoint=args.resume_from_checkpoint,
+        preprocessing_cache_dir=args.preprocessing_cache_dir,
+        hf_cache_dir=args.hf_cache_dir,
     )
 
 if __name__ == "__main__":

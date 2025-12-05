@@ -20,6 +20,8 @@ MODEL_DIR=${1:-./init_baseline/DeepSeekV3_${config}}
 OUTPUT_DIR=${4:-./output_baseline/${RUN_NAME}}
 #DATASET_NAME=${5:-roneneldan/TinyStories}
 DATASET_NAME=${5:-cerebras/SlimPajama-627B}
+PREPROCESSING_CACHE_DIR=${12:-/hkfs/work/workspace/scratch/hgf_mxv5488-slimpajama}
+HF_CACHE_DIR=${13:-/hkfs/work/workspace/scratch/hgf_mxv5488-slimpajama}
 EPOCHS=${6:-1}
 LR=${7:-5e-4}
 BATCH_SIZE=${8:-32}
@@ -41,11 +43,15 @@ echo "BATCH_SIZE: $BATCH_SIZE"
 echo "GRAD_ACCUM: $GRAD_ACCUM"
 echo "WANDB_PROJECT: $WANDB_PROJECT"
 echo "WANDB_RUN: $WANDB_RUN"
+echo "PREPROCESSING_CACHE_DIR: $PREPROCESSING_CACHE_DIR"
+echo "HF_CACHE_DIR: $HF_CACHE_DIR"
 
 torchrun --nproc_per_node 1 pretrain_baseline.py \
   --model-dir "$MODEL_DIR" \
   --output-dir "$OUTPUT_DIR" \
   --dataset-name "$DATASET_NAME" \
+  --preprocessing_cache_dir "$PREPROCESSING_CACHE_DIR" \
+  $(if [ -n "$HF_CACHE_DIR" ]; then echo "--hf-cache-dir $HF_CACHE_DIR"; fi) \
   --n-hidden-layers "$n_hidden_layers" \
   --n-shared-experts "$n_shared_experts" \
   --n-routed-experts "$n_routed_experts" \

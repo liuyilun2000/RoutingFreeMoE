@@ -1,10 +1,31 @@
 import os
 import numpy as np
 import torch
-from datasets import Dataset, load_dataset
+from datasets import Dataset, load_dataset, IterableDataset
 from multiprocessing import cpu_count
-from transformers import Trainer
+from transformers import Trainer, AutoTokenizer
 import wandb
+
+
+def preprocess_function_factory(tokenizer, max_length):
+    """
+    Factory to create a preprocessing function for the dataset.
+    This function is used consistently across cache_dataset.py and training scripts.
+    """
+    def preprocess_function(examples):
+        outputs = tokenizer(
+            examples['text'],
+            truncation=True,
+            max_length=max_length,
+            padding='max_length',
+            return_tensors='pt'
+        )
+        return {
+            'input_ids': [x.tolist() for x in outputs['input_ids']],
+            'attention_mask': [x.tolist() for x in outputs['attention_mask']],
+            'labels': [x.tolist() for x in outputs['input_ids']],
+        }
+    return preprocess_function
 
 
 def create_splits(dataset_name: str, cache_dir: str, val_size: int = 10000):
@@ -71,17 +92,38 @@ def preprocess_and_cache_dataset(
             print(f"Failed to load cache: {e}")
             print("Falling back to preprocessing...")
     
+    # Handle streaming datasets (IterableDataset)
+    is_streaming = isinstance(dataset, IterableDataset)
+    if is_streaming:
+        print(f"Converting streaming dataset to regular dataset for {split_name}...")
+        # For streaming datasets, we need to convert to list first
+        # This is memory-intensive but necessary for preprocessing and caching
+        print("Collecting all examples from streaming dataset...")
+        dataset_list = []
+        for example in dataset:
+            dataset_list.append(example)
+        print(f"Collected {len(dataset_list)} examples")
+        # Convert to regular Dataset
+        from datasets import Dataset as RegularDataset
+        dataset = RegularDataset.from_list(dataset_list)
+    
     if num_proc is None:
         num_proc = max(1, int(cpu_count()))
     
     print(f"Preprocessing {split_name} dataset using {num_proc} processes...")
-    processed_dataset = dataset.map(
-        preprocess_fn,
-        batched=True,
-        remove_columns=dataset.column_names,
-        num_proc=num_proc,
-        desc=f"Preprocessing {split_name} split"
-    )
+    map_kwargs = {
+        "function": preprocess_fn,
+        "batched": True,
+        "desc": f"Preprocessing {split_name} split"
+    }
+    
+    # Add num_proc and remove_columns only for regular (non-streaming) datasets
+    # After conversion above, dataset is no longer IterableDataset
+    if not is_streaming or isinstance(dataset, Dataset):
+        map_kwargs["num_proc"] = num_proc
+        map_kwargs["remove_columns"] = dataset.column_names
+    
+    processed_dataset = dataset.map(**map_kwargs)
     
     print(f"Saving preprocessed {split_name} dataset to cache...")
     processed_dataset.save_to_disk(cache_path)
