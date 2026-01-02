@@ -163,14 +163,132 @@ def wrap_mlp_with_routing_free(mlp, cfg):
     """
     Helper: wrap an existing MLP (with up_proj/down_proj/act_fn) by routing-free gating FFN.
     """
+    '''usage:
+    layer.mlp = wrap_mlp_with_routing_free(layer.mlp, config)
+    # or MoE:
+    for i, e in enumerate(layer.mlp.experts):
+        layer.mlp.experts[i] = wrap_mlp_with_routing_free(e, config)
+    '''
     return RoutingFreeFFNWrapper(mlp, cfg)
+
+def balancing_loss_func(
+    probs: torch.Tensor,
+    mask: torch.Tensor,
+    dim: int | None = None,
+) -> torch.Tensor | int:
+    """
+    Switch-Transformer-style balancing loss.
+    dim: None -> over all dimensions; 0 -> over expert dimension; 1 -> over token dimension.
+    probs/mask must have the same shape.
+    """
+    if probs is None or mask is None:
+        return 0
+    assert dim in [0, 1, None], "dim must be 0, 1 or None"
+    assert probs.shape == mask.shape, "probs and mask must have the same shape"
+
+    density = torch.mean(mask.float(), dim=dim)
+    density_proxy = torch.mean(probs, dim=dim)
+    assert len(density.shape) == 1 and len(density_proxy.shape) == 1
+    assert density.shape[0] == density_proxy.shape[0]
+    loss = torch.mean(density * density_proxy)
+    return loss
 
 class RoutingFreeAuxLossMixin:
     def compute_routing_free_aux(self, gate_scores, cfg, training):
         """
-        Placeholder: Calculate auxiliary loss and lambda update based on gate_scores.
+        Args:
+            gate_scores: List/tuple of [layer][B, T, n_experts] or None
+            cfg: Provide gating-related parameters (gate_proj_rank, gate_threshold, gate_temperature, etc.).
+            training: bool, whether in training mode (determines whether to update lambda_coef)
+        Returns:
+            aux_loss: Tensor or None (can be added to main loss)
+            aux_dict: Dictionary for monitoring or None
+            new_lambda: Updated lambda_coef (can be written back to self.lambda_coef)
         """
-        raise NotImplementedError("compute_routing_free_aux 尚未实现")
+        if gate_scores is None:
+            return None, None, getattr(self, "lambda_coef", None)
+
+        gate_act_fn = ACT2FN[getattr(cfg, "gate_act_fn", "linear")]
+        gate_temperature = getattr(cfg, "gate_temperature", 1.0)
+        gate_threshold = getattr(cfg, "gate_threshold", 0.5)
+        density_target = getattr(cfg, "density_target", 0.1)
+        per_expert_coef = getattr(cfg, "per_expert_aux_loss_coef", 0.5)
+        per_token_coef = getattr(cfg, "per_token_aux_loss_coef", 0.5)
+        eta_coef = getattr(cfg, "eta_coef", 1.2)
+        n_experts = getattr(cfg, "n_experts", None)
+
+        # get or initialize lambda_coef
+        lambda_init = getattr(cfg, "lambda_coef", 1e-6)
+        lambda_coef = getattr(self, "lambda_coef", lambda_init)
+        if not isinstance(lambda_coef, torch.Tensor):
+            lambda_coef = torch.tensor(lambda_coef)
+
+        gate_probs_list = []
+        total_tokens = 0
+
+        for layer_gate_scores in gate_scores:
+            if layer_gate_scores is None:
+                continue
+            B, T, n = layer_gate_scores.shape
+            total_tokens = B * T
+            if total_tokens > 0:
+                gate_probs_list.append(layer_gate_scores.view(-1, n))
+
+        if not gate_probs_list:
+            return None, None, lambda_coef
+
+        gate_probs = torch.cat(gate_probs_list, dim=-1)  # [B*T, L*n_experts]
+        # Ensure lambda and gate_probs are on the same device/type
+        lambda_coef = lambda_coef.to(device=gate_probs.device, dtype=gate_probs.dtype)
+        gate_probs = gate_act_fn(gate_probs)
+        gate_probs = gate_probs / gate_temperature
+        gate_mask = (gate_probs > gate_threshold).float()
+
+        density = torch.mean(gate_mask)
+        density_ratio = density / density_target
+        density_per_expert = torch.mean(gate_mask, dim=0)
+        density_proxy = torch.mean(gate_probs)
+        density_proxy_per_expert = torch.mean(gate_probs, dim=0)
+
+        per_expert_aux = balancing_loss_func(gate_probs, gate_mask, dim=0) if per_expert_coef > 0 else 0
+        per_token_aux = balancing_loss_func(gate_probs, gate_mask, dim=1) if per_token_coef > 0 else 0
+        reg_loss = per_expert_aux * per_expert_coef + per_token_aux * per_token_coef
+        aux_loss = lambda_coef * reg_loss
+
+        new_lambda = lambda_coef
+        if training and aux_loss is not None:
+            new_lambda = lambda_coef * (1 + eta_coef * (density - density_target) ** 2) ** torch.sign(density - density_target)
+            new_lambda = torch.clamp(new_lambda, max=1.0)
+            if hasattr(self, "lambda_coef"):
+                self.lambda_coef = new_lambda
+            if hasattr(self, "sync_lambda_coef"):
+                self.sync_lambda_coef()
+
+        aux_dict = {
+            "aux_loss": aux_loss.item() if aux_loss is not None else None,
+            "reg_loss": reg_loss.item() if reg_loss is not None else None,
+            "lambda_coef": float(new_lambda.detach().cpu()) if isinstance(new_lambda, torch.Tensor) else new_lambda,
+            "density": density.item(),
+            "density_ratio": density_ratio.item(),
+            "density_proxy": density_proxy.item(),
+            "per_expert_aux_loss": per_expert_aux.item() if isinstance(per_expert_aux, torch.Tensor) else per_expert_aux,
+            "per_token_aux_loss": per_token_aux.item() if isinstance(per_token_aux, torch.Tensor) else per_token_aux,
+        }
+
+        # Layer-wise expert density metrics, skip if n_experts is unknown
+        if n_experts and density_per_expert is not None:
+            n_layers = density_per_expert.numel() // n_experts
+            layer_digits = len(str(n_layers - 1)) if n_layers > 0 else 1
+            expert_digits = len(str(n_experts - 1)) if n_experts > 0 else 1
+            for l in range(n_layers):
+                for e in range(n_experts):
+                    idx = l * n_experts + e
+                    l_str = str(l).zfill(layer_digits)
+                    e_str = str(e).zfill(expert_digits)
+                    aux_dict[f"expert_density_L{l_str}E{e_str}"] = float(density_per_expert[idx].detach().cpu())
+                    # Optional: record proxy: aux_dict[f"expert_density_proxy_L{l_str}E{e_str}"] = float(density_proxy_per_expert[idx].detach().cpu())
+
+        return aux_loss, aux_dict, new_lambda
 
 '''
 # routing_free/deepseek_v3_rf.py
