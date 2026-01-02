@@ -91,17 +91,84 @@ class RoutingFreeGate(nn.Module):
 
         return gate_mask_full, gate_score_full
 
+
+class RoutingFreeFFNWrapper(nn.Module):
+    """
+    Routing-free FFN:
+    FFN(x) = [σ(x A_gate B_gate) ⊙ (x W_up)] W_down
+    """
+
+    def __init__(self, base_mlp: nn.Module, cfg):
+        """
+        base_mlp: Must contain up_proj, down_proj, act_fn attributes.
+        cfg: Provide gating-related parameters (gate_proj_rank, gate_threshold, gate_temperature, etc.).
+        """
+        super().__init__()
+        self.base_mlp = base_mlp
+        self.hidden_size = getattr(cfg, "hidden_size")
+        self.intermediate_size = getattr(
+            cfg, "moe_intermediate_size", getattr(cfg, "intermediate_size", None)
+        )
+        if self.hidden_size is None or self.intermediate_size is None:
+            raise ValueError("hidden_size / intermediate_size must be set in cfg.")
+
+        self.gate_proj_rank = getattr(cfg, "gate_proj_rank", self.hidden_size // 4)
+
+        # A_gate, B_gate Low-rank gating
+        self.gate_proj_A = nn.Linear(self.hidden_size, self.gate_proj_rank, bias=False)
+        self.gate_proj_B = nn.Linear(self.gate_proj_rank, self.intermediate_size, bias=False)
+
+        # Reuse gating module to calculate score/mask, ensuring shared A parameters
+        self.gate = RoutingFreeGate(self.hidden_size, cfg)
+        self.gate.gate_proj_A = self.gate_proj_A
+
+        self.output_gate_scores = getattr(cfg, "output_gate_scores", True)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None):
+        """
+        Returns:
+            out: Same shape as x
+            gate_score_full (or None): Same shape as x[...,0]
+        """
+        gate_mask_full, gate_score_full = self.gate(x, mask)
+
+        if not gate_mask_full.any():
+            out = torch.zeros_like(x)
+            return out, gate_score_full if self.output_gate_scores else None
+
+        orig_shape = x.shape
+        x_flat = x.view(-1, orig_shape[-1])
+        gate_mask_flat = gate_mask_full.view(-1)
+        idx = torch.nonzero(gate_mask_flat, as_tuple=False).squeeze(-1)
+        x_valid = x_flat[idx]
+
+        # σ(x A_gate B_gate)
+        gate_hidden = self.gate_proj_A(x_valid)
+        gate_hidden = self.gate_proj_B(gate_hidden)
+        gate_act = self.base_mlp.act_fn(gate_hidden)
+
+        # (x W_up)
+        up_out = self.base_mlp.up_proj(x_valid)
+
+        # Down projection
+        ffn_valid = self.base_mlp.down_proj(gate_act * up_out).to(dtype=x.dtype)
+
+        out_flat = torch.zeros_like(x_flat)
+        out_flat[idx] = ffn_valid
+        out = out_flat.view(orig_shape)
+
+        return out, gate_score_full if self.output_gate_scores else None
+
 def wrap_mlp_with_routing_free(mlp, cfg):
     """
     Helper: wrap an existing MLP (with up_proj/down_proj/act_fn) by routing-free gating FFN.
-    当前返回占位实现，请在添加 RoutingFreeFFNWrapper 后替换。
     """
-    raise NotImplementedError("wrap_mlp_with_routing_free 尚未实现")
+    return RoutingFreeFFNWrapper(mlp, cfg)
 
 class RoutingFreeAuxLossMixin:
     def compute_routing_free_aux(self, gate_scores, cfg, training):
         """
-        占位：基于 gate_scores 计算辅助损失与 lambda 更新。
+        Placeholder: Calculate auxiliary loss and lambda update based on gate_scores.
         """
         raise NotImplementedError("compute_routing_free_aux 尚未实现")
 
