@@ -5,99 +5,32 @@
 #                          modular_deepseek_v3.py file directly. One of our CI enforces this.
 #                🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨
 import math
-from typing import Callable, Optional, Tuple, Union
+from collections.abc import Callable
+from typing import Optional, Union
 
 import torch
 import torch.nn.functional as F
-from torch import nn, topk
+from torch import nn
 
-from transformers.activations import ACT2FN
-from transformers.cache_utils import Cache, DynamicCache
-from transformers.generation import GenerationMixin
-from transformers.integrations import use_kernel_forward_from_hub
-from transformers.masking_utils import create_causal_mask
-from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
-from transformers.modeling_layers import (
+from ... import initialization as init
+from ...activations import ACT2FN
+from ...cache_utils import Cache, DynamicCache
+from ...generation import GenerationMixin
+from ...integrations import use_kernel_forward_from_hub, use_kernel_func_from_hub
+from ...masking_utils import create_causal_mask
+from ...modeling_flash_attention_utils import FlashAttentionKwargs
+from ...modeling_layers import (
     GenericForSequenceClassification,
     GenericForTokenClassification,
     GradientCheckpointingLayer,
 )
-from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast, MoeModelOutputWithPast, MoeCausalLMOutputWithPast
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
-from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
-from transformers.processing_utils import Unpack
-from transformers.utils import (
-    TransformersKwargs,
-    auto_docstring,
-    can_return_tuple,
-    is_torch_flex_attn_available,
-    logging,
-)
-from transformers.utils.deprecation import deprecate_kwarg
-from transformers.utils.generic import check_model_inputs
-from .configuration_deepseek_v3 import RoutingFreeDeepseekV3Config
-
-
-if is_torch_flex_attn_available():
-    from torch.nn.attention.flex_attention import BlockMask
-
-    from transformers.integrations.flex_attention import make_flex_block_causal_mask
-
-
-logger = logging.get_logger(__name__)
-_CONFIG_FOR_DOC = "RoutingFreeDeepseekV3Config"
-
-
-# Modified from transformers.models.mixtral.modeling_mixtral.load_balancing_loss_func
-def balancing_loss_func(
-    probs: torch.Tensor,
-    mask: torch.Tensor,
-    dim: Optional[int] = None
-) -> Union[torch.Tensor, int]:
-    r"""
-    Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
-
-    See Switch Transformer (https://huggingface.co/papers/2101.03961) for more details. This function implements the loss
-    function presented in equations (4) - (6) of the paper. It aims at penalizing cases where the routing between
-    experts is too unbalanced.
-
-    Args:
-        probs:
-            Logits from the `gate`, should be a tuple of model.config.num_hidden_layers tensors of
-            shape [num_tokens, num_experts].
-        mask:
-            The activated mask of the gate, should be a tuple of model.config.num_hidden_layers tensors of
-            shape [num_tokens, num_experts].
-        dim:
-            The dimension to compute the mean over.
-            If dim is None, the balancing loss is computed over both dimensions.
-            If dim is 0, the balancing loss is computed over the expert dimension.
-            If dim is 1, the balancing loss is computed over the token dimension.
-    Returns:
-        The auxiliary loss.
-    """
-    if probs is None or mask is None:
-        return 0
-    
-    assert dim in [0, 1, None], "dim must be 0, 1 or None (default), for balancing over experts, tokens, or both"
-    assert probs.shape == mask.shape, "probs and mask must have the same shape"
-    
-    # Compute the fraction of {tokens routed to each expert} or {experts routed to each token} (non-differentiable)
-    density = torch.mean(mask.float(), dim=dim)
-
-    # Compute the fraction of probability mass assigned {to each expert} or {to each token} (differentiable)
-    density_proxy = torch.mean(probs, dim=dim)
-
-    assert len(density.shape) == 1, "density must be a 1D tensor"
-    assert len(density_proxy.shape) == 1, "density_proxy must be a 1D tensor"
-    assert density.shape[0] == density_proxy.shape[0], "density and density_proxy must have the same number of elements"
-        
-    # density, density_proxy: [num_elements] {num_experts if dim=0} or {num_tokens if dim=1} or {1 if dim=None}
-    # both desired to have uniform allocation (1/num_elements) across all elements
-    # two vectors will be pushed towards uniform allocation when the dot product is minimized
-    loss = torch.mean(density * density_proxy) 
-    return loss
-
+from ...modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
+from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
+from ...processing_utils import Unpack
+from ...utils import TransformersKwargs, auto_docstring, can_return_tuple
+from ...utils.generic import check_model_inputs, maybe_autocast
+from .configuration_deepseek_v3 import DeepseekV3Config
 
 
 @use_kernel_forward_from_hub("RMSNorm")
@@ -122,22 +55,53 @@ class DeepseekV3RMSNorm(nn.Module):
 
 
 class DeepseekV3RotaryEmbedding(nn.Module):
-    def __init__(self, config: RoutingFreeDeepseekV3Config, device=None):
+    inv_freq: torch.Tensor  # fix linting for `register_buffer`
+
+    def __init__(self, config: DeepseekV3Config, device=None):
         super().__init__()
-        # BC: "rope_type" was originally "type"
-        if hasattr(config, "rope_scaling") and config.rope_scaling is not None:
-            self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-        else:
-            self.rope_type = "default"
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
+        self.rope_type = self.config.rope_parameters["rope_type"]
+        rope_init_fn: Callable = self.compute_default_rope_parameters
+        if self.rope_type != "default":
+            rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+        inv_freq, self.attention_scaling = rope_init_fn(self.config, device)
+
         self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.original_inv_freq = self.inv_freq
+        self.register_buffer("original_inv_freq", inv_freq.clone(), persistent=False)
+
+    @staticmethod
+    def compute_default_rope_parameters(
+        config: Optional[DeepseekV3Config] = None,
+        device: Optional["torch.device"] = None,
+        seq_len: Optional[int] = None,
+    ) -> tuple["torch.Tensor", float]:
+        """
+        Computes the inverse frequencies according to the original RoPE implementation
+        Args:
+            config ([`~transformers.PreTrainedConfig`]):
+                The model configuration.
+            device (`torch.device`):
+                The device to use for initialization of the inverse frequencies.
+            seq_len (`int`, *optional*):
+                The current sequence length. Unused for this type of RoPE.
+        Returns:
+            Tuple of (`torch.Tensor`, `float`), containing the inverse frequencies for the RoPE embeddings and the
+            post-processing scaling factor applied to the computed cos/sin (unused in this type of RoPE).
+        """
+        base = config.rope_parameters["rope_theta"]
+        dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+
+        attention_factor = 1.0  # Unused in this type of RoPE
+
+        # Compute the inverse frequencies
+        inv_freq = 1.0 / (
+            base ** (torch.arange(0, dim, 2, dtype=torch.int64).to(device=device, dtype=torch.float) / dim)
+        )
+        return inv_freq, attention_factor
 
     @torch.no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
@@ -146,7 +110,7 @@ class DeepseekV3RotaryEmbedding(nn.Module):
         position_ids_expanded = position_ids[:, None, :].float()
 
         device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
-        with torch.autocast(device_type=device_type, enabled=False):  # Force float32
+        with maybe_autocast(device_type=device_type, enabled=False):  # Force float32
             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
             emb = torch.cat((freqs, freqs), dim=-1)
             cos = emb.cos() * self.attention_scaling
@@ -155,175 +119,130 @@ class DeepseekV3RotaryEmbedding(nn.Module):
         return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
 
-
 class DeepseekV3MLP(nn.Module):
-    def __init__(self, config, hidden_size=None, intermediate_size=None):
+    def __init__(self, config, intermediate_size=None):
         super().__init__()
         self.config = config
-        self.hidden_size = config.hidden_size if hidden_size is None else hidden_size
+        self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size if intermediate_size is None else intermediate_size
-
         self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
         self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
         self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[config.hidden_act]
 
-    def forward(self, x, mask=None):
+    def forward(self, x):
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-        return down_proj, None
+        return down_proj
 
 
-
-class RoutingFreeDeepseekV3MLP(nn.Module):
-    def __init__(self, config, hidden_size=None, intermediate_size=None):
+class DeepseekV3TopkRouter(nn.Module):
+    def __init__(self, config):
         super().__init__()
         self.config = config
-        self.hidden_size = config.hidden_size if hidden_size is None else hidden_size
-        self.intermediate_size = (
-            config.moe_intermediate_size if intermediate_size is None else intermediate_size
-        )
-        
-        # Autonomouse Expert
-        self.gate_proj_rank = getattr(config, "gate_proj_rank", self.hidden_size // 4)
-        
-        # Projection layers
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
+        self.n_routed_experts = config.n_routed_experts
+
+        self.weight = nn.Parameter(torch.empty((self.n_routed_experts, config.hidden_size)))
+        self.register_buffer("e_score_correction_bias", torch.zeros(self.n_routed_experts))
+
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.view(-1, self.config.hidden_size)
+        router_logits = F.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
+        return router_logits
+
+
+class DeepseekV3NaiveMoe(nn.Module):
+    """Collection of expert weights stored as 3D tensors."""
+
+    def __init__(self, config):
+        super().__init__()
+        self.num_experts = config.num_local_experts
+        self.hidden_dim = config.hidden_size
+        self.intermediate_dim = config.moe_intermediate_size
+        self.gate_up_proj = nn.Parameter(torch.empty(self.num_experts, 2 * self.intermediate_dim, self.hidden_dim))
+        self.down_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_dim, self.intermediate_dim))
         self.act_fn = ACT2FN[config.hidden_act]
-        
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False) if self.gate_proj_rank is None else None
-        self.gate_proj_A = nn.Linear(self.hidden_size, self.gate_proj_rank, bias=False) if self.gate_proj_rank else None
-        self.gate_proj_B = nn.Linear(self.gate_proj_rank, self.intermediate_size, bias=False) if self.gate_proj_rank else None
-        
-        # Gating modules
-        self.gate_norm = self._gate_norm(getattr(config, "gate_norm", "l2"))
 
-        self.gate_scale = nn.Parameter(torch.ones(1)) if getattr(config, "gate_scale", None) else None
-        # Initialize gate_bias to the negative expected norm of the gate_hidden vector -E[||gate_hidden||],
-        # so that the gating threshold is meaningful at initialization.
-        if getattr(config, "gate_bias", None):
-            self.gate_bias = nn.Parameter(torch.full((1,), -1e-6))
-            '''
-            if getattr(config, "gate_norm", "l2") == "l2":
-                # For L2 norm, the expected norm of a standard normal vector of size d is approximately sqrt(d)
-                self.gate_bias = nn.Parameter(torch.full((1,), -math.sqrt(self.gate_proj_rank)))
-            elif getattr(config, "gate_norm", "l2") == "l1":
-                # For L1 norm, the expected norm is d * sqrt(2/pi)
-                self.gate_bias = nn.Parameter(torch.full((1,), -self.gate_proj_rank * math.sqrt(2 / math.pi)))
-            '''
-        else:   
-            self.gate_bias = None
-        self.gate_act_fn = ACT2FN[config.gate_act_fn if getattr(config, "gate_act_fn", None) else "linear"]
-        self.gate_threshold = getattr(config, "gate_threshold", 0.5)
-        self.gate_temperature = getattr(config, "gate_temperature", 1.0)
-        
-        self.output_gate_scores = getattr(config, "output_gate_scores", True)
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        top_k_index: torch.Tensor,
+        top_k_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        final_hidden_states = torch.zeros_like(hidden_states)
+        with torch.no_grad():
+            expert_mask = torch.nn.functional.one_hot(top_k_index, num_classes=self.num_experts)
+            expert_mask = expert_mask.permute(2, 1, 0)
+            expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
 
-    def _gate_norm(self, norm_type):
-        if norm_type == "l1":
-            return lambda x: torch.norm(x, p=1, dim=-1)
-        elif norm_type == "l2":
-            return lambda x: torch.norm(x, p=2, dim=-1)
-        elif norm_type == "linf":
-            return lambda x: torch.norm(x, p=float('inf'), dim=-1)
-        else:
-            return lambda x: torch.norm(x, p=2, dim=-1)  # Default to L2
+        for expert_idx in expert_hit:
+            expert_idx = expert_idx[0]
+            if expert_idx == self.num_experts:
+                continue
+            top_k_pos, token_idx = torch.where(expert_mask[expert_idx])
+            current_state = hidden_states[token_idx]
+            gate, up = nn.functional.linear(current_state, self.gate_up_proj[expert_idx]).chunk(2, dim=-1)
+            current_hidden_states = self.act_fn(gate) * up
+            current_hidden_states = nn.functional.linear(current_hidden_states, self.down_proj[expert_idx])
+            current_hidden_states = current_hidden_states * top_k_weights[token_idx, top_k_pos, None]
+            final_hidden_states.index_add_(0, token_idx, current_hidden_states.to(final_hidden_states.dtype))
 
-    def forward(self, x, mask=None):
-        # [FIXME] 
-        # x: [B, T, H] as Batch_size, seq_len, Hidden_size
-        # mask: [B, T] or None
-        # If mask is provided, only compute for tokens where mask is True, else output is zero
-
-        x_flat = x.view(-1, x.shape[-1])  # [B*T, H]
-        if mask is not None:
-            mask_flat = mask.view(-1)  # [B*T]
-            idx = torch.nonzero(mask_flat, as_tuple=False).squeeze(-1)  # [N], N = number of True tokens
-            x_valid = x_flat[idx]  # [N, H]
-        else:
-            idx = torch.arange(x_flat.shape[0], device=x.device)
-            x_valid = x_flat
-
-        mlp_out_flat = x_flat.new_zeros(x_flat.shape[0], self.hidden_size, dtype=x.dtype)  # [B*T, H]
-        if self.gate_proj_rank is None:
-            # Standard MLP path
-            # GLU(x) = down_proj(σ(gate_proj(x)) ⊙ up_proj(x))
-            mlp_out_valid = self.down_proj(self.act_fn(self.gate_proj(x_valid)) * self.up_proj(x_valid))
-            mlp_out_flat[idx] = mlp_out_valid
-            mlp_out = mlp_out_flat.view(x.shape[0], x.shape[1], self.hidden_size)
-            return mlp_out, None
-
-        # Compute gate_hidden for gating decision, only for x_valid and masked indices
-        gate_hidden = self.gate_proj_A(x_valid)  # [N, gate_proj_rank]
-        gate_score = self.gate_norm(gate_hidden)  # [N]
-        #print(f"gate_score: {gate_score}")
-        if self.gate_scale is not None:
-            gate_score = gate_score * self.gate_scale
-        if self.gate_bias is not None:
-            gate_score = gate_score + self.gate_bias
-        #print(f"gate_score: {gate_score}")
-        gate_score = self.gate_act_fn(gate_score)  # [N]
-
-        # Create mask: True for tokens to compute, False for tokens to skip
-        gate_mask = (gate_score >= self.gate_threshold / self.gate_temperature)  # [N]
-
-        # Only process tokens where mask is True
-        if gate_mask.any():
-            x_valid = x_valid[gate_mask]  # [M, H], M = number of valid tokens after gate_mask
-            gate_hidden_valid = gate_hidden[gate_mask]  # [M, gate_proj_rank]
-            gate_score_valid = gate_score[gate_mask]  # [M]
-            # GLU(x) = down_proj(σ(gate_proj(x)) ⊙ up_proj(x))
-            mlp_out_valid = self.down_proj(self.act_fn(self.gate_proj_B(gate_hidden_valid)) * self.up_proj(x_valid))  # [M, H]
-            mlp_out_valid = mlp_out_valid * gate_score_valid.unsqueeze(1)  # [M, H]
-            mlp_out_valid = mlp_out_valid.to(x.dtype)
-            mlp_out_flat[idx[gate_mask]] = mlp_out_valid  # Fill [B*T, H] with valid positions [M, H]
-
-        mlp_out = mlp_out_flat.view(x.shape[0], x.shape[1], self.hidden_size)  # [B, T, H]
-        # gate_score is [N], i.e., only for valid tokens (mask==True or all if mask is None)
-        # If output_gate_scores, return a tensor of shape [B, T] with -1s for masked-out tokens
-        if self.output_gate_scores:
-            gate_score_full = x_flat.new_ones(x_flat.shape[0], dtype=gate_score.dtype) * -float('inf')
-            if gate_mask.any():
-                gate_score_full[idx[gate_mask]] = gate_score_valid  # Fill [B*T] with valid positions [M]
-            gate_score_full = gate_score_full.view(x.shape[0], x.shape[1])
-            return mlp_out, gate_score_full
-        else:
-            return mlp_out, None
+        return final_hidden_states
 
 
-class RoutingFreeDeepseekV3MoE(nn.Module):
+class DeepseekV3MoE(nn.Module):
     """
-    A mixed expert module ###containing shared experts.
+    A mixed expert module containing shared experts.
     """
 
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.experts = nn.ModuleList(
-            [
-                RoutingFreeDeepseekV3MLP(config, intermediate_size=config.moe_intermediate_size)
-                for _ in range(config.n_experts)
-            ]
+        self.experts = DeepseekV3NaiveMoe(config)
+        self.gate = DeepseekV3TopkRouter(config)
+        self.shared_experts = DeepseekV3MLP(
+            config=config, intermediate_size=config.moe_intermediate_size * config.n_shared_experts
         )
-        self.output_gate_scores = config.output_gate_scores 
-    
-    def forward(self, hidden_states, mask=None):
-        out = torch.zeros_like(hidden_states)
+        self.n_routed_experts = config.n_routed_experts
+        self.n_group = config.n_group
+        self.topk_group = config.topk_group
+        self.norm_topk_prob = config.norm_topk_prob
+        self.routed_scaling_factor = config.routed_scaling_factor
+        self.top_k = config.num_experts_per_tok
+
+    def route_tokens_to_experts(self, router_logits):
+        router_logits = router_logits.sigmoid()
+        router_logits_for_choice = router_logits + self.gate.e_score_correction_bias
+        group_scores = (
+            router_logits_for_choice.view(-1, self.n_group, self.n_routed_experts // self.n_group)
+            .topk(2, dim=-1)[0]
+            .sum(dim=-1)
+        )
+        group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]
+        group_mask = torch.zeros_like(group_scores)
+        group_mask.scatter_(1, group_idx, 1)
+        score_mask = (
+            group_mask.unsqueeze(-1)
+            .expand(-1, self.n_group, self.n_routed_experts // self.n_group)
+            .reshape(-1, self.n_routed_experts)
+        )
+        scores_for_choice = router_logits_for_choice.masked_fill(~score_mask.bool(), 0.0)
+        topk_indices = torch.topk(scores_for_choice, k=self.top_k, dim=-1, sorted=False)[1]
+        topk_weights = router_logits.gather(1, topk_indices)
+        if self.norm_topk_prob:
+            denominator = topk_weights.sum(dim=-1, keepdim=True) + 1e-20
+            topk_weights /= denominator
+        topk_weights = topk_weights * self.routed_scaling_factor
+        return topk_indices, topk_weights
+
+    def forward(self, hidden_states):
+        residuals = hidden_states
         orig_shape = hidden_states.shape
-        expert_gate_scores = [] if self.output_gate_scores else None
-        for expert_idx in range(len(self.experts)):
-            expert = self.experts[expert_idx]
-            expert_output, expert_gate_score = expert(hidden_states, mask)
-            out += expert_output.view(*orig_shape)
-            if self.output_gate_scores:
-                expert_gate_scores.append(expert_gate_score)
-        
-        if self.output_gate_scores:
-            expert_gate_scores = torch.stack(expert_gate_scores, dim=-1) # [B, T, n_experts]   
-        else:
-            expert_gate_scores = None
-        
-        return out, expert_gate_scores
+        router_logits = self.gate(hidden_states)
+        topk_indices, topk_weights = self.route_tokens_to_experts(router_logits)
+        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+        hidden_states = self.experts(hidden_states, topk_indices, topk_weights).view(*orig_shape)
+        hidden_states = hidden_states + self.shared_experts(residuals)
+        return hidden_states
 
 
 def rotate_half(x):
@@ -333,6 +252,7 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 
+@use_kernel_func_from_hub("rotary_pos_emb")
 def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     """Applies Rotary Position Embedding to the query and key tensors.
 
@@ -363,13 +283,13 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
     This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
-    n_key_value_heads, seqlen, head_dim) to (batch, n_attention_heads, seqlen, head_dim)
+    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
     """
-    batch, n_key_value_heads, slen, head_dim = hidden_states.shape
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
     if n_rep == 1:
         return hidden_states
-    hidden_states = hidden_states[:, :, None, :, :].expand(batch, n_key_value_heads, n_rep, slen, head_dim)
-    return hidden_states.reshape(batch, n_key_value_heads * n_rep, slen, head_dim)
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
 def eager_attention_forward(
@@ -380,10 +300,10 @@ def eager_attention_forward(
     attention_mask: Optional[torch.Tensor],
     scaling: float,
     dropout: float = 0.0,
-    **kwargs,
+    **kwargs: Unpack[TransformersKwargs],
 ):
-    key_states = repeat_kv(key, module.n_key_value_groups)
-    value_states = repeat_kv(value, module.n_key_value_groups)
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
@@ -445,14 +365,14 @@ def yarn_get_mscale(scale=1, mscale=1):
 class DeepseekV3Attention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: RoutingFreeDeepseekV3Config, layer_idx: int):
+    def __init__(self, config: DeepseekV3Config, layer_idx: int):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
-        self.n_key_value_groups = config.n_attention_heads // config.n_key_value_heads
+        self.num_key_value_groups = config.num_attention_heads // config.num_key_value_heads
         self.attention_dropout = config.attention_dropout
-        self.n_heads = config.n_attention_heads
-        self.rope_theta = config.rope_theta
+        self.num_heads = config.num_attention_heads
+
         self.q_lora_rank = config.q_lora_rank
         self.qk_rope_head_dim = config.qk_rope_head_dim
         self.kv_lora_rank = config.kv_lora_rank
@@ -462,11 +382,11 @@ class DeepseekV3Attention(nn.Module):
 
         self.is_causal = True
         if self.q_lora_rank is None:
-            self.q_proj = nn.Linear(config.hidden_size, self.n_heads * self.qk_head_dim, bias=False)
+            self.q_proj = nn.Linear(config.hidden_size, self.num_heads * self.qk_head_dim, bias=False)
         else:
             self.q_a_proj = nn.Linear(config.hidden_size, config.q_lora_rank, bias=config.attention_bias)
             self.q_a_layernorm = DeepseekV3RMSNorm(config.q_lora_rank)
-            self.q_b_proj = nn.Linear(config.q_lora_rank, self.n_heads * self.qk_head_dim, bias=False)
+            self.q_b_proj = nn.Linear(config.q_lora_rank, self.num_heads * self.qk_head_dim, bias=False)
 
         self.kv_a_proj_with_mqa = nn.Linear(
             config.hidden_size,
@@ -476,25 +396,24 @@ class DeepseekV3Attention(nn.Module):
         self.kv_a_layernorm = DeepseekV3RMSNorm(self.kv_lora_rank)
         self.kv_b_proj = nn.Linear(
             self.kv_lora_rank,
-            self.n_heads * (self.qk_nope_head_dim + self.v_head_dim),
+            self.num_heads * (self.qk_nope_head_dim + self.v_head_dim),
             bias=False,
         )
 
         self.o_proj = nn.Linear(
-            self.n_heads * self.v_head_dim,
+            self.num_heads * self.v_head_dim,
             config.hidden_size,
             bias=config.attention_bias,
         )
 
         self.scaling = self.qk_head_dim ** (-0.5)
-        if self.config.rope_scaling is not None:
-            mscale_all_dim = self.config.rope_scaling.get("mscale_all_dim", 0)
-            scaling_factor = self.config.rope_scaling["factor"]
+        if self.config.rope_parameters.get("rope_type", "default") != "default":
+            mscale_all_dim = self.config.rope_parameters.get("mscale_all_dim", 0)
+            scaling_factor = self.config.rope_parameters["factor"]
             if mscale_all_dim:
                 mscale = yarn_get_mscale(scaling_factor, mscale_all_dim)
                 self.scaling = self.scaling * mscale * mscale
 
-    @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -564,98 +483,61 @@ class DeepseekV3Attention(nn.Module):
         return attn_output, attn_weights
 
 
-class RoutingFreeDeepseekV3DecoderLayer(GradientCheckpointingLayer):
-    def __init__(self, config: RoutingFreeDeepseekV3Config, layer_idx: int):
+class DeepseekV3DecoderLayer(GradientCheckpointingLayer):
+    def __init__(self, config: DeepseekV3Config, layer_idx: int):
         super().__init__()
-        self.layer_idx = layer_idx
         self.hidden_size = config.hidden_size
 
-        self.self_attn = DeepseekV3Attention(config=config, layer_idx=self.layer_idx)
+        self.self_attn = DeepseekV3Attention(config=config, layer_idx=layer_idx)
 
-        if self.layer_idx >= config.first_k_dense_replace:
-            self.is_moe = True  
-            self.mlp = RoutingFreeDeepseekV3MoE(config)
+        if layer_idx >= config.first_k_dense_replace:
+            self.mlp = DeepseekV3MoE(config)
         else:
-            self.is_moe = False
             self.mlp = DeepseekV3MLP(config)
-        
+
         self.input_layernorm = DeepseekV3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = DeepseekV3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        
-        self.gate_threshold = config.gate_threshold
-        self.density_target = config.density_target
 
-    @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
-        output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
-        output_gate_scores: Optional[bool] = True,
+        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> tuple[torch.FloatTensor, Optional[torch.FloatTensor], Optional[torch.FloatTensor]]:
+    ) -> torch.Tensor:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-
         # Self Attention
-        hidden_states, self_attn_weights = self.self_attn(
+        hidden_states, _ = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
-            output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
             **kwargs,
         )
         hidden_states = residual + hidden_states
+
         # Fully Connected
+        residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-        
-        mlp_out, expert_gate_scores = self.mlp(hidden_states, mask = None)  # [B, T, H], [B, T, n_experts]
-        hidden_states = hidden_states + mlp_out
-        
-        outputs = (hidden_states,)
-        if output_attentions:
-            outputs += (self_attn_weights,)
-        if output_gate_scores:
-            outputs += (expert_gate_scores,)
-        
-        return outputs
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = residual + hidden_states
+        return hidden_states
 
 
-DEEPSEEK_V3_START_DOCSTRING = r"""
-    This model inherits from [`PreTrainedModel`]. Check the superclass documentation for the generic methods the
-    library implements for all its model (such as downloading or saving, resizing the input embeddings, pruning heads
-    etc.)
-
-    This model is also a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass.
-    Use it as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage
-    and behavior.
-
-    Parameters:
-        config ([`RoutingFreeDeepseekV3Config`]):
-            Model configuration class with all the parameters of the model. Initializing with a config file does not
-            load the weights associated with the model, only the configuration. Check out the
-            [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-"""
-
-
-#@add_start_docstrings(
-#    "The bare DeepseekV3 Model outputting raw hidden-states without any specific head on top.",
-#    DEEPSEEK_V3_START_DOCSTRING,
-#)
-class RoutingFreeDeepseekV3PreTrainedModel(PreTrainedModel):
-    config_class = RoutingFreeDeepseekV3Config
+@auto_docstring
+class DeepseekV3PreTrainedModel(PreTrainedModel):
+    config: DeepseekV3Config
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["RoutingFreeDeepseekV3DecoderLayer"]
+    _no_split_modules = ["DeepseekV3DecoderLayer"]
     _skip_keys_device_placement = ["past_key_values"]
     _supports_flash_attn = True
     _supports_sdpa = True
@@ -663,120 +545,34 @@ class RoutingFreeDeepseekV3PreTrainedModel(PreTrainedModel):
     _can_compile_fullgraph = False
     _supports_attention_backend = True
     _can_record_outputs = {
-        "hidden_states": RoutingFreeDeepseekV3DecoderLayer,
+        "hidden_states": DeepseekV3DecoderLayer,
+        "attentions": DeepseekV3Attention,
     }
+    _keep_in_fp32_modules_strict = ["e_score_correction_bias"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
-        std = self.config.initializer_range
-        if isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, DeepseekV3RMSNorm):
-            module.weight.data.fill_(1.0)
-        
-        if hasattr(module, "gate_scale") and isinstance(module.gate_scale, nn.Parameter):
-            nn.init.ones_(module.gate_scale)
-        #if hasattr(module, "gate_bias") and isinstance(module.gate_bias, nn.Parameter):
-        #    nn.init.zeros_(module.gate_bias)
+        super()._init_weights(module)
+        if isinstance(module, DeepseekV3TopkRouter):
+            init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
+            init.zeros_(module.e_score_correction_bias)
+        elif isinstance(module, DeepseekV3NaiveMoe):
+            init.normal_(module.gate_up_proj, mean=0.0, std=self.config.initializer_range)
+            init.normal_(module.down_proj, mean=0.0, std=self.config.initializer_range)
 
 
-DEEPSEEK_V3_INPUTS_DOCSTRING = r"""
-    Args:
-        input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
-            Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you provide
-            it.
-
-            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
-            [`PreTrainedTokenizer.__call__`] for details.
-
-            [What are input IDs?](../glossary#input-ids)
-        attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length) or `BlockMask`, *optional*):
-            Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
-
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-
-            If the model is configured to use flex_attention, it will attempt to convert the mask Tensor into a BlockMask,
-            but you can also pass a `BlockMask` object directly here.
-
-            [What are attention masks?](../glossary#attention-mask)
-
-            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
-            [`PreTrainedTokenizer.__call__`] for details.
-
-            If `past_key_values` is used, optionally only the last `input_ids` have to be input (see
-            `past_key_values`).
-
-            If you want to change padding behavior, you should read [`modeling_opt._prepare_decoder_attention_mask`]
-            and modify to your needs. See diagram 1 in [the paper](https://arxiv.org/abs/1910.13461) for more
-            information on the default strategy.
-
-            - 1 indicates the head is **not masked**,
-            - 0 indicates the head is **masked**.
-        position_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Indices of positions of each input sequence tokens in the position embeddings. Selected in the range `[0,
-            config.n_positions - 1]`.
-
-            [What are position IDs?](../glossary#position-ids)
-        past_key_values (`Cache`, *optional*):
-            Pre-computed hidden-states (key and values in the self-attention blocks and in the cross-attention
-            blocks) that can be used to speed up sequential decoding. This typically consists in the `past_key_values`
-            returned by the model at a previous stage of decoding, when `use_cache=True` or `config.use_cache=True`.
-
-            It is a [`~cache_utils.Cache`] instance. For more details, see our [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
-
-            If `past_key_values` are used, the user can optionally input only the last `input_ids` (those that don't
-            have their past key value states given to this model) of shape `(batch_size, 1)` instead of all `input_ids`
-            of shape `(batch_size, sequence_length)`.
-        inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
-            Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
-            is useful if you want more control over how to convert `input_ids` indices into associated vectors than the
-            model's internal embedding lookup matrix.
-        use_cache (`bool`, *optional*):
-            If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
-            `past_key_values`).
-        output_attentions (`bool`, *optional*):
-            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
-            tensors for more detail.
-        output_hidden_states (`bool`, *optional*):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
-            more detail.
-        return_dict (`bool`, *optional*):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-        cache_position (`torch.LongTensor` of shape `(sequence_length)`, *optional*):
-            Indices depicting the position of the input sequence tokens in the sequence. Contrarily to `position_ids`,
-            this tensor is not affected by padding. It is used to update the cache in the correct position and to infer
-            the complete sequence length.
-"""
-
-
-#@add_start_docstrings(
-#    "The bare DeepseekV3 Model outputting raw hidden-states without any specific head on top.",
-#    DEEPSEEK_V3_START_DOCSTRING,
-#)
-class RoutingFreeDeepseekV3Model(RoutingFreeDeepseekV3PreTrainedModel):
-    """
-    Transformer decoder consisting of *config.n_hidden_layers* layers. Each layer is a [`RoutingFreeDeepseekV3DecoderLayer`]
-
-    Args:
-        config: RoutingFreeDeepseekV3Config
-    """
-
+@auto_docstring
+class DeepseekV3Model(DeepseekV3PreTrainedModel):
     _keys_to_ignore_on_load_unexpected = [r"model\.layers\.61.*"]
 
-    def __init__(self, config: RoutingFreeDeepseekV3Config):
+    def __init__(self, config: DeepseekV3Config):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.layers = nn.ModuleList(
-            [RoutingFreeDeepseekV3DecoderLayer(config, layer_idx) for layer_idx in range(config.n_hidden_layers)]
+            [DeepseekV3DecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
         self.norm = DeepseekV3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = DeepseekV3RotaryEmbedding(config=config)
@@ -784,12 +580,6 @@ class RoutingFreeDeepseekV3Model(RoutingFreeDeepseekV3PreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
-
-    def get_input_embeddings(self):
-        return self.embed_tokens
-
-    def set_input_embeddings(self, value):
-        self.embed_tokens = value
 
     @check_model_inputs
     @auto_docstring
@@ -800,42 +590,23 @@ class RoutingFreeDeepseekV3Model(RoutingFreeDeepseekV3PreTrainedModel):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        output_gate_scores: Optional[bool] = True,
         cache_position: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> MoeModelOutputWithPast:
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        use_cache = use_cache if use_cache is not None else self.config.use_cache
-
+    ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
-        if self.gradient_checkpointing and self.training and use_cache:
-            logger.warning_once(
-                "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
-            )
-            use_cache = False
-
-        # TODO (joao): remove this exception in v4.56 -- it exists for users that try to pass a legacy cache
-        if not isinstance(past_key_values, (type(None), Cache)):
-            raise ValueError("The `past_key_values` should be either a `Cache` object or `None`.")
-
         if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids)
+            inputs_embeds: torch.Tensor = self.embed_tokens(input_ids)
 
         if use_cache and past_key_values is None:
             past_key_values = DynamicCache(config=self.config)
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+            cache_position: torch.Tensor = (
+                torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
             )
 
         if position_ids is None:
@@ -851,98 +622,41 @@ class RoutingFreeDeepseekV3Model(RoutingFreeDeepseekV3PreTrainedModel):
         )
 
         hidden_states = inputs_embeds
+        position_embeddings = self.rotary_emb(hidden_states, position_ids=position_ids)
 
-        # create position embeddings to be shared across the decoder layers
-        position_embeddings = self.rotary_emb(hidden_states, position_ids)
-
-        # decoder layers
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attns = () if output_attentions else None
-        all_gate_scores = () if output_gate_scores else None
-
-        for decoder_layer in self.layers[: self.config.n_hidden_layers]:
-            if output_hidden_states:
-                all_hidden_states += (hidden_states,)
-
-            layer_outputs = decoder_layer(
+        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+            hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,
+                position_embeddings=position_embeddings,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
-                output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
-                position_embeddings=position_embeddings,
-                output_gate_scores=output_gate_scores,
                 **kwargs,
             )
 
-            hidden_states = layer_outputs[0]
-
-            if output_attentions:
-                all_self_attns += (layer_outputs[1],)
-            if output_gate_scores:
-                all_gate_scores += (layer_outputs[-1],)
-
         hidden_states = self.norm(hidden_states)
-
-        # add hidden states from the last decoder layer
-        if output_hidden_states:
-            all_hidden_states += (hidden_states,)
-
-        return MoeModelOutputWithPast(
+        return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            past_key_values=past_key_values if use_cache else None,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attns,
-            router_logits=all_gate_scores,
+            past_key_values=past_key_values,
         )
 
 
-
-
-
-class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, GenerationMixin):
-    _tied_weights_keys = ["lm_head.weight"]
+@auto_docstring
+class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel, GenerationMixin):
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     _tp_plan = {"lm_head": "colwise_rep"}
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
 
     def __init__(self, config):
         super().__init__(config)
-        self.model = RoutingFreeDeepseekV3Model(config)
+        self.model = DeepseekV3Model(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        
-        self.gate_act_fn = ACT2FN[config.gate_act_fn if getattr(config, "gate_act_fn", None) else "linear"]
-        self.gate_temperature = getattr(config, "gate_temperature", 1.0)
-        self.gate_threshold = getattr(config, "gate_threshold", 0.5)
-        self.density_target = getattr(config, "density_target", 0.1)
-        self.register_buffer("lambda_coef", torch.tensor(getattr(config, "lambda_coef", 1e-6)))
-        self.eta_coef = getattr(config, "eta_coef", 1.2)
-        self.per_expert_aux_loss_coef = getattr(config, "per_expert_aux_loss_coef", 0.5)
-        self.per_token_aux_loss_coef = getattr(config, "per_token_aux_loss_coef", 0.5)
-        self.n_experts = getattr(config, "n_experts", 1)
-        
+
         # Initialize weights and apply final processing
         self.post_init()
-
-    def get_input_embeddings(self):
-        return self.model.embed_tokens
-
-    def set_input_embeddings(self, value):
-        self.model.embed_tokens = value
-
-    def get_output_embeddings(self):
-        return self.lm_head
-
-    def set_output_embeddings(self, new_embeddings):
-        self.lm_head = new_embeddings
-
-    def set_decoder(self, decoder):
-        self.model = decoder
-
-    def get_decoder(self):
-        return self.model
 
     @can_return_tuple
     @auto_docstring
@@ -955,32 +669,15 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        output_gate_scores: Optional[bool] = True,
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> MoeCausalLMOutputWithPast:
+    ) -> CausalLMOutputWithPast:
         r"""
-            labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-                Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
-                config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
-                (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
-
-            logits_to_keep (`int` or `torch.Tensor`, *optional*):
-                If an `int`, compute logits for the last `logits_to_keep` tokens. If `0`, calculate logits for all
-                `input_ids` (special case). Only last token logits are needed for generation, and calculating them only for that
-                token can save memory, which becomes pretty significant for long sequences or large vocabulary size.
-                If a `torch.Tensor`, must be 1D corresponding to the indices to keep in the sequence length dimension.
-                This is useful when using packed tensor format (single dimension for batch and sequence length).
-
-        Returns:
-
         Example:
 
         ```python
-        >>> from transformers import AutoTokenizer, RoutingFreeDeepseekV3ForCausalLM
+        >>> from transformers import AutoTokenizer, DeepseekV3ForCausalLM
 
         >>> model = DeepseekV3ForCausalLM.from_pretrained("meta-deepseek_v3/DeepseekV3-2-7b-hf")
         >>> tokenizer = AutoTokenizer.from_pretrained("meta-deepseek_v3/DeepseekV3-2-7b-hf")
@@ -993,25 +690,14 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
         ```"""
-        is_training = self.training
-        
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-
-        # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-        outputs: MoeModelOutputWithPast = self.model(
+        outputs: BaseModelOutputWithPast = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
             cache_position=cache_position,
-            output_gate_scores=output_gate_scores,
             **kwargs,
         )
 
@@ -1019,131 +705,32 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeDeepseekV3PreTrainedModel, Gen
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
-        
-        gate_scores = outputs.router_logits if output_gate_scores else None
 
         loss = None
-        lm_loss = None
         if labels is not None:
-            lm_loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
-            loss = lm_loss
-        
-        aux_loss = None
-        per_expert_aux_loss = 0
-        per_token_aux_loss = 0
-        density_ratio = 0
-        density_proxy = 0
-        density_ratio_per_expert = None
-        density_proxy_per_expert = None
-        
-        if output_gate_scores and gate_scores is not None:
-            #print(gate_scores)
-            # gate_scores is a list of tensors, one per layer
-            # Each tensor has shape [B, T, number_of_experts]
-            total_tokens = 0
-            gate_probs = []
-            
-            for layer_idx, layer_gate_scores in enumerate(gate_scores):  # Iterate over layers
-                if layer_gate_scores is None:
-                    continue
-                
-                B, T, n_experts = layer_gate_scores.shape
-                total_tokens = B * T
-                
-                if total_tokens > 0:
-                    layer_gate_probs_flat = layer_gate_scores.view(-1, n_experts) # [B*T, n_experts]
-                    gate_probs.append(layer_gate_probs_flat)
-                        
-            if gate_probs:
-                gate_probs = torch.cat(gate_probs, dim=-1)  # [B*T, L*n_experts]
-                
-                gate_probs = self.gate_act_fn(gate_probs)
-                gate_probs = gate_probs / self.gate_temperature
-                gate_mask = (gate_probs > self.gate_threshold).float() # [B*T, L*n_experts]
-                
-                density = torch.mean(gate_mask)
-                density_ratio = density / self.density_target
-                density_per_expert = torch.mean(gate_mask, dim=0)
-                #density_per_token = torch.mean(gate_mask, dim=1)
-                density_proxy = torch.mean(gate_probs)
-                density_proxy_per_expert = torch.mean(gate_probs, dim=0)
-                #density_proxy_per_token = torch.mean(gate_probs, dim=1)
+            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
 
-                if self.per_expert_aux_loss_coef > 0:
-                    per_expert_aux_loss = balancing_loss_func(gate_probs, gate_mask, dim=0)
-                if self.per_token_aux_loss_coef > 0:
-                    per_token_aux_loss = balancing_loss_func(gate_probs, gate_mask, dim=1)
-                
-                reg_loss = (
-                    per_expert_aux_loss * self.per_expert_aux_loss_coef + 
-                    per_token_aux_loss * self.per_token_aux_loss_coef
-                )
-                aux_loss = self.lambda_coef * reg_loss
-        
-        if is_training:
-            loss += aux_loss if aux_loss else 0
-            self.lambda_coef = self.lambda_coef * (1 + self.eta_coef * (density - self.density_target) ** 2) ** torch.sign(density - self.density_target)
-            self.lambda_coef = torch.clamp(self.lambda_coef, max=1.0)
-            self.sync_lambda_coef()
-        
-        # Create aux_loss dictionary with proper tensor handling
-        aux_loss_dict = None
-        if aux_loss is not None:
-            aux_loss_dict = {
-                "lm_loss": lm_loss.item() if lm_loss is not None else None,
-                "aux_loss": aux_loss.item() if aux_loss is not None else None,
-                "reg_loss": reg_loss.item() if 'reg_loss' in locals() and reg_loss is not None else None,
-                "lambda_coef": self.lambda_coef.item(),
-                "density": density.item() if 'density' in locals() else -1.0,
-                "density_ratio": density_ratio.item() if 'density_ratio' in locals() else -1.0,
-                "density_proxy": density_proxy.item() if 'density_proxy' in locals() else -1.0,
-                "per_expert_aux_loss": per_expert_aux_loss.item() if isinstance(per_expert_aux_loss, torch.Tensor) else per_expert_aux_loss,
-                "per_token_aux_loss": per_token_aux_loss.item() if isinstance(per_token_aux_loss, torch.Tensor) else per_token_aux_loss,
-            }
-            # Add per-expert density and proxy entries for each expert in each layer
-            if density_per_expert is not None and density_proxy_per_expert is not None:
-                # density_per_expert and density_proxy_per_expert are 1D tensors of length L * n_experts
-                n_layers = density_per_expert.numel() // self.n_experts
-                # Determine the number of digits for zero-padding
-                layer_digits = len(str(n_layers - 1))
-                expert_digits = len(str(self.n_experts - 1))
-                for l in range(n_layers):
-                    for e in range(self.n_experts):
-                        idx = l * self.n_experts + e
-                        l_str = str(l).zfill(layer_digits)
-                        e_str = str(e).zfill(expert_digits)
-                        aux_loss_dict[f"expert_density_L{l_str}E{e_str}"] = float(density_per_expert[idx].detach().cpu())
-                        # aux_loss_dict[f"expert_density_proxy_L{l_str}E{e_str}"] = float(density_proxy_per_expert[idx].detach().cpu())
-                
-        return MoeCausalLMOutputWithPast(
+        return CausalLMOutputWithPast(
             loss=loss,
-            aux_loss=aux_loss_dict,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
-            router_logits=gate_scores,
         )
 
-    def sync_lambda_coef(self):
-        import torch.distributed as dist
-        if dist.is_initialized():
-            # All-reduce with averaging across all ranks
-            dist.all_reduce(self.lambda_coef, op=dist.ReduceOp.AVG)
 
-
-class RoutingFreeDeepseekV3ForSequenceClassification(GenericForSequenceClassification, RoutingFreeDeepseekV3PreTrainedModel):
+class DeepseekV3ForSequenceClassification(GenericForSequenceClassification, DeepseekV3PreTrainedModel):
     pass
 
 
-class RoutingFreeDeepseekV3ForTokenClassification(GenericForTokenClassification, RoutingFreeDeepseekV3PreTrainedModel):
+class DeepseekV3ForTokenClassification(GenericForTokenClassification, DeepseekV3PreTrainedModel):
     pass
 
 
 __all__ = [
-    "RoutingFreeDeepseekV3PreTrainedModel",
-    "RoutingFreeDeepseekV3Model",
-    "RoutingFreeDeepseekV3ForCausalLM",
-    "RoutingFreeDeepseekV3ForSequenceClassification",
-    "RoutingFreeDeepseekV3ForTokenClassification",
+    "DeepseekV3PreTrainedModel",
+    "DeepseekV3Model",
+    "DeepseekV3ForCausalLM",
+    "DeepseekV3ForSequenceClassification",
+    "DeepseekV3ForTokenClassification",
 ]

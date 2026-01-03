@@ -16,21 +16,23 @@
 # limitations under the License.
 """DeepSeekV3 model configuration"""
 
-from transformers.configuration_utils import PretrainedConfig
-from transformers.modeling_rope_utils import rope_config_validation
+from typing import Optional
+
+from ...configuration_utils import PreTrainedConfig
+from ...modeling_rope_utils import RopeParameters
 
 
 DEEPSEEK_PRETRAINED_CONFIG_ARCHIVE_MAP = {}
 
 
-class RoutingFreeDeepseekV3Config(PretrainedConfig):
+class DeepseekV3Config(PreTrainedConfig):
     r"""
-    This is the configuration class to store the configuration of a [`RoutingFreeDeepseekV3Model`]. It is used to instantiate an DeepSeek
+    This is the configuration class to store the configuration of a [`DeepseekV3Model`]. It is used to instantiate an DeepSeek
     model according to the specified arguments, defining the model architecture. Instantiating a configuration with the
     defaults will yield a similar configuration to that of the DeepSeek-V3.
     e.g. [bzantium/tiny-deepseek-v3](https://huggingface.co/bzantium/tiny-deepseek-v3)
-    Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
-    documentation from [`PretrainedConfig`] for more information.
+    Configuration objects inherit from [`PreTrainedConfig`] and can be used to control the model outputs. Read the
+    documentation from [`PreTrainedConfig`] for more information.
 
 
     Args:
@@ -43,18 +45,18 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
             Dimension of the MLP representations.
         moe_intermediate_size (`int`, *optional*, defaults to 2048):
             Dimension of the MoE representations.
-        n_hidden_layers (`int`, *optional*, defaults to 61):
+        num_hidden_layers (`int`, *optional*, defaults to 61):
             Number of hidden layers in the Transformer decoder.
-        n_attention_heads (`int`, *optional*, defaults to 128):
+        num_attention_heads (`int`, *optional*, defaults to 128):
             Number of attention heads for each attention layer in the Transformer decoder.
-        n_key_value_heads (`int`, *optional*, defaults to 128):
+        num_key_value_heads (`int`, *optional*, defaults to 128):
             This is the number of key_value heads that should be used to implement Grouped Query Attention. If
-            `n_key_value_heads=n_attention_heads`, the model will use Multi Head Attention (MHA), if
-            `n_key_value_heads=1 the model will use Multi Query Attention (MQA) otherwise GQA is used. When
+            `num_key_value_heads=num_attention_heads`, the model will use Multi Head Attention (MHA), if
+            `num_key_value_heads=1 the model will use Multi Query Attention (MQA) otherwise GQA is used. When
             converting a multi-head checkpoint to a GQA checkpoint, each group key and value head should be constructed
-            by meanpooling all the original heads within that group. For more details checkout [this
-            paper](https://arxiv.org/pdf/2305.13245.pdf). If it is not specified, will default to
-            `n_attention_heads`.
+            by meanpooling all the original heads within that group. For more details, check out [this
+            paper](https://huggingface.co/papers/2305.13245). If it is not specified, will default to
+            `num_attention_heads`.
         n_shared_experts (`int`, *optional*, defaults to 1):
             Number of shared experts.
         n_routed_experts (`int`, *optional*, defaults to 256):
@@ -71,12 +73,11 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
             Dimension of the value heads.
         qk_nope_head_dim (`int`, *optional*, defaults to 128):
             Dimension of the query/key heads that don't use rotary position embeddings.
-    
-        #n_group (`int`, *optional*, defaults to 8):
+        n_group (`int`, *optional*, defaults to 8):
             Number of groups for routed experts.
-        #topk_group (`int`, *optional*, defaults to 4):
+        topk_group (`int`, *optional*, defaults to 4):
             Number of selected groups for each token(for each token, ensuring the selected experts is only within `topk_group` groups).
-        #n_experts_per_tok (`int`, *optional*, defaults to 8):
+        num_experts_per_tok (`int`, *optional*, defaults to 8):
             Number of selected experts, None means dense model.
         first_k_dense_replace (`int`, *optional*, defaults to 3):
             Number of dense layers in shallow layers(embed->dense->dense->...->dense->moe->moe...->lm_head).
@@ -107,123 +108,85 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
             issue](https://github.com/pytorch/pytorch/issues/76232).
         tie_word_embeddings (`bool`, *optional*, defaults to `False`):
             Whether to tie weight embeddings
-        rope_theta (`float`, *optional*, defaults to 10000.0):
-            The base period of the RoPE embeddings.
-        rope_scaling (`Dict`, *optional*):
-            Dictionary containing the scaling configuration for the RoPE embeddings. Currently supports two scaling
-            strategies: linear and dynamic. Their scaling factor must be a float greater than 1. The expected format is
-            `{"type": strategy name, "factor": scaling factor}`. When using this flag, don't update
-            `max_position_embeddings` to the expected new maximum.
+        rope_parameters (`RopeParameters`, *optional*):
+            Dictionary containing the configuration parameters for the RoPE embeddings. The dictionary should contain
+            a value for `rope_theta` and optionally parameters used for scaling in case you want to use RoPE
+            with longer `max_position_embeddings`.
         rope_interleave (`bool`, *optional*, defaults to `True`):
             Whether to interleave the rotary position embeddings.
         attention_bias (`bool`, defaults to `False`, *optional*, defaults to `False`):
             Whether to use a bias in the query, key, value and output projection layers during self-attention.
         attention_dropout (`float`, *optional*, defaults to 0.0):
             The dropout ratio for the attention probabilities.
-        
-        ### RoutingFreeMoE
-        gate_proj_rank (`int`, *optional*, defaults to `hidden_size // 4`):
-            Rank of the gating projection for NoAE/AoE MLP.
-        gate_norm (`str`, *optional*, defaults to `"l2"`):
-            Norm type for gating ("l1", "l2", "linf").
-        gate_scale (`bool`, *optional*, defaults to `True`):
-            Whether to use a learnable scale parameter for gate score.
-        gate_bias (`bool`, *optional*, defaults to `True`):
-            Whether to use a learnable bias parameter for gate score.
-        gate_act_fn (`str` or `function`, *optional*, defaults to `None`):
-            Activation function for gate score (default: identity).
-        gate_threshold (`float`, *optional*, defaults to `0.0`):
-            Threshold for gate score to activate token.
-        output_gate_scores (`bool`, *optional*, defaults to `False`):
-            Whether to output gate scores for analysis.
-        n_experts (`int`, *optional*, defaults to `1`):
-            Number of experts in RoutingFreeMoE.
 
     ```python
-    >>> from transformers import RoutingFreeDeepseekV3Model, RoutingFreeDeepseekV3Config
+    >>> from transformers import DeepseekV3Model, DeepseekV3Config
 
     >>> # Initializing a Deepseek-V3 style configuration
-    >>> configuration = RoutingFreeDeepseekV3Config()
+    >>> configuration = DeepseekV3Config()
 
     >>> # Accessing the model configuration
     >>> configuration = model.config
     ```"""
 
-    model_type = "routing_free_deepseek_v3"
+    model_type = "deepseek_v3"
     keys_to_ignore_at_inference = ["past_key_values"]
-    base_model_tp_plan = {  # TODO: only replicate attention layers when > first_k_dense_replace
-        "layers.*.mlp.experts.*.gate_proj": "local_colwise",
-        "layers.*.mlp.experts.*.up_proj": "local_colwise",
-        "layers.*.mlp.experts.*.down_proj": "local_rowwise",
-        "layers.*.mlp.experts.*": "local",  # each expert is wrapped in a module list
-        "layers.*.mlp.shared_experts.gate_proj": "local_colwise",
-        "layers.*.mlp.shared_experts.up_proj": "local_colwise",
-        "layers.*.mlp.shared_experts.down_proj": "local_rowwise",
-        "layers.*.mlp.shared_experts": "local",
-        "layers.*.mlp.gate_proj": "local_colwise",
-        "layers.*.mlp.up_proj": "local_colwise",
-        "layers.*.mlp.down_proj": "local_rowwise",
-        "layers.*.mlp": "gather",  # This is the only moment where results are gathered
+    base_model_tp_plan = {
+        "layers.*.mlp.experts.gate_up_proj": "local_rowwise",
+        "layers.*.mlp.experts.down_proj": "local_rowwise",
+        "layers.*.mlp.experts": "gather",
+        "layers.*.mlp.shared_experts.gate_proj": "colwise",
+        "layers.*.mlp.shared_experts.up_proj": "colwise",
+        "layers.*.mlp.shared_experts.down_proj": "rowwise",
+        "layers.*.mlp.gate_proj": "colwise",
+        "layers.*.mlp.up_proj": "colwise",
+        "layers.*.mlp.down_proj": "rowwise",
     }
     base_model_pp_plan = {
         "embed_tokens": (["input_ids"], ["inputs_embeds"]),
         "layers": (["hidden_states", "attention_mask"], ["hidden_states"]),
         "norm": (["hidden_states"], ["hidden_states"]),
     }
+    attribute_map = {
+        "num_local_experts": "n_routed_experts",
+    }
 
     def __init__(
         self,
-        vocab_size=129280,
-        hidden_size=7168,
-        intermediate_size=18432,
-        moe_intermediate_size=2048,
-        n_hidden_layers=61,
-        n_attention_heads=128,
-        n_key_value_heads=128,
-        #n_shared_experts=1,
-        #n_routed_experts=256,
-        #routed_scaling_factor=2.5,
-        kv_lora_rank=512,
-        q_lora_rank=1536,
-        qk_rope_head_dim=64,
-        v_head_dim=128,
-        qk_nope_head_dim=128,
-        #n_group=8,
-        #topk_group=4,
-        #n_experts_per_tok=8,
-        first_k_dense_replace=3,
-        #norm_topk_prob=True,
-        hidden_act="silu",
-        max_position_embeddings=4096,
-        initializer_range=0.02,
-        rms_norm_eps=1e-6,
-        use_cache=True,
-        pad_token_id=None,
-        bos_token_id=0,
-        eos_token_id=1,
-        pretraining_tp=1,
-        tie_word_embeddings=False,
-        rope_theta=10000.0,
-        rope_scaling=None,
-        rope_interleave=True,
-        attention_bias=False,
-        attention_dropout=0.0,
-        ### RoutingFreeMoE
-        gate_proj_rank=None,
-        gate_norm="l2",
-        gate_bias=True,
-        gate_scale=True,
-        gate_act_fn=None,
-        gate_threshold=0.05,
-        gate_temperature=1.0,
-        output_gate_scores=False,
-        n_experts=256,
-        ### ReMoE's aux loss
-        density_target=0.1, 
-        lambda_coef=1e-5,
-        eta_coef=0.2,
-        per_expert_aux_loss_coef=0.5,
-        per_token_aux_loss_coef=0.5,
+        vocab_size: Optional[int] = 129280,
+        hidden_size: Optional[int] = 7168,
+        intermediate_size: Optional[int] = 18432,
+        moe_intermediate_size: Optional[int] = 2048,
+        num_hidden_layers: Optional[int] = 61,
+        num_attention_heads: Optional[int] = 128,
+        num_key_value_heads: Optional[int] = 128,
+        n_shared_experts: Optional[int] = 1,
+        n_routed_experts: Optional[int] = 256,
+        routed_scaling_factor: Optional[float] = 2.5,
+        kv_lora_rank: Optional[int] = 512,
+        q_lora_rank: Optional[int] = 1536,
+        qk_rope_head_dim: Optional[int] = 64,
+        v_head_dim: Optional[int] = 128,
+        qk_nope_head_dim: Optional[int] = 128,
+        n_group: Optional[int] = 8,
+        topk_group: Optional[int] = 4,
+        num_experts_per_tok: Optional[int] = 8,
+        first_k_dense_replace: Optional[int] = 3,
+        norm_topk_prob: Optional[bool] = True,
+        hidden_act: Optional[str] = "silu",
+        max_position_embeddings: Optional[int] = 4096,
+        initializer_range: Optional[float] = 0.02,
+        rms_norm_eps: Optional[int] = 1e-6,
+        use_cache: Optional[bool] = True,
+        pad_token_id: Optional[int] = None,
+        bos_token_id: Optional[int] = 0,
+        eos_token_id: Optional[int] = 1,
+        pretraining_tp: Optional[int] = 1,
+        tie_word_embeddings: Optional[bool] = False,
+        rope_parameters: Optional[RopeParameters | dict[str, RopeParameters]] = None,
+        rope_interleave: Optional[bool] = True,
+        attention_bias: Optional[bool] = False,
+        attention_dropout: Optional[float] = 0.0,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -231,11 +194,11 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
         self.moe_intermediate_size = moe_intermediate_size
-        self.n_hidden_layers = n_hidden_layers
-        self.n_attention_heads = n_attention_heads
-        #self.n_shared_experts = n_shared_experts
-        #self.n_routed_experts = n_routed_experts
-        #self.routed_scaling_factor = routed_scaling_factor
+        self.num_hidden_layers = num_hidden_layers
+        self.num_attention_heads = num_attention_heads
+        self.n_shared_experts = n_shared_experts
+        self.n_routed_experts = n_routed_experts
+        self.routed_scaling_factor = routed_scaling_factor
         self.kv_lora_rank = kv_lora_rank
         self.q_lora_rank = q_lora_rank
         self.qk_rope_head_dim = qk_rope_head_dim
@@ -243,57 +206,26 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
         self.qk_nope_head_dim = qk_nope_head_dim
         self.qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
         self.head_dim = qk_rope_head_dim
-        #self.n_group = n_group
-        #self.topk_group = topk_group
-        #self.n_experts_per_tok = n_experts_per_tok
+        self.n_group = n_group
+        self.topk_group = topk_group
+        self.num_experts_per_tok = num_experts_per_tok
         self.first_k_dense_replace = first_k_dense_replace
-        #self.norm_topk_prob = norm_topk_prob
+        self.norm_topk_prob = norm_topk_prob
         self.rope_interleave = rope_interleave
 
         # for backward compatibility
-        if n_key_value_heads is None:
-            n_key_value_heads = n_attention_heads
+        if num_key_value_heads is None:
+            num_key_value_heads = num_attention_heads
 
-        self.n_key_value_heads = n_key_value_heads
+        self.num_key_value_heads = num_key_value_heads
         self.hidden_act = hidden_act
         self.initializer_range = initializer_range
         self.rms_norm_eps = rms_norm_eps
         self.pretraining_tp = pretraining_tp
         self.use_cache = use_cache
-        self.rope_theta = rope_theta
-        self.rope_scaling = rope_scaling
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
-        # Validate the correctness of rotary position embeddings parameters
-        # BC: if there is a 'type' field, copy it it to 'rope_type'.
-        if self.rope_scaling is not None and "type" in self.rope_scaling:
-            self.rope_scaling["rope_type"] = self.rope_scaling["type"]
-
-        if self.rope_scaling is not None:
-            for key in ["beta_fast", "beta_slow", "factor"]:
-                if key in self.rope_scaling:
-                    self.rope_scaling[key] = float(self.rope_scaling[key])
-
-        rope_config_validation(self)
-        ### RoutingFreeMoE
-        self.gate_proj_rank = gate_proj_rank
-        self.gate_norm = gate_norm
-        self.gate_bias = gate_bias
-        self.gate_scale = gate_scale
-        self.gate_act_fn = gate_act_fn
-        self.gate_threshold = gate_threshold
-        self.gate_temperature = gate_temperature
-        self.output_gate_scores = output_gate_scores
-        self.n_experts = n_experts
-        self.density_target = density_target
-        self.lambda_coef = lambda_coef
-        self.eta_coef = eta_coef
-        self.per_expert_aux_loss_coef = per_expert_aux_loss_coef
-        self.per_token_aux_loss_coef = per_token_aux_loss_coef
-        
-        # Add missing attributes for compatibility
-        self.output_attentions = False
-        self.output_hidden_states = False
+        self.rope_parameters = rope_parameters
 
         super().__init__(
             pad_token_id=pad_token_id,
@@ -303,5 +235,21 @@ class RoutingFreeDeepseekV3Config(PretrainedConfig):
             **kwargs,
         )
 
+    def convert_rope_params_to_dict(self, ignore_keys_at_rope_validation: Optional[set] = None, **kwargs):
+        rope_scaling = kwargs.pop("rope_scaling", None)
+        self.rope_parameters = rope_scaling or self.rope_parameters
+        self.rope_parameters = self.rope_parameters if self.rope_parameters is not None else {}
 
-__all__ = ["RoutingFreeDeepseekV3Config"]
+        # Standardize and validate the correctness of rotary position embeddings parameters
+        self.rope_parameters.setdefault("rope_theta", kwargs.pop("rope_theta", self.default_theta))
+        self.standardize_rope_params()
+        self.validate_rope(ignore_keys=ignore_keys_at_rope_validation)
+
+        # Convert to float because RoPE fn expect a float. Models on the hub were saved as int
+        for key in ["beta_fast", "beta_slow", "factor"]:
+            if key in self.rope_parameters:
+                self.rope_parameters[key] = float(self.rope_parameters[key])
+        return kwargs
+
+
+__all__ = ["DeepseekV3Config"]
