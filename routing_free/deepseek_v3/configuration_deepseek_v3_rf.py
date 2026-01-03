@@ -3,7 +3,8 @@
 
 from transformers.modeling_rope_utils import rope_config_validation
 
-from routing_free.deepseek_v3.configuration_deepseek_v3 import DeepseekV3Config
+# 直接从 transformers 官方 DeepseekV3 配置继承，避免包内相对导入问题
+from transformers.models.deepseek_v3.configuration_deepseek_v3 import DeepseekV3Config
 
 
 class RoutingFreeConfigMixin:

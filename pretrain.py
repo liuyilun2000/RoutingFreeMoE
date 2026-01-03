@@ -34,11 +34,7 @@ from transformers import (
 )
 from transformers import DataCollatorForLanguageModeling
 
-from routing_free.deepseek_v3.configuration_deepseek_v3 import RoutingFreeDeepseekV3Config
-#from routing_free.deepseek_v3.modeling_deepseek_v3 import (
-#    RoutingFreeDeepseekV3Model,
-#    RoutingFreeDeepseekV3ForCausalLM,
-#)
+from routing_free.deepseek_v3.configuration_deepseek_v3_rf import RoutingFreeDeepseekV3Config
 from routing_free.deepseek_v3_rf import RoutingFreeDeepseekV3Model, RoutingFreeDeepseekV3ForCausalLM
 
 AutoConfig.register("routing_free_deepseek_v3", RoutingFreeDeepseekV3Config)
