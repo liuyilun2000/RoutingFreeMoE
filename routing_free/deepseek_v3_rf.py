@@ -14,6 +14,7 @@ from transformers.models.deepseek_v3.modeling_deepseek_v3 import (
     GenerationMixin,
 )
 
+from routing_free.deepseek_v3.configuration_deepseek_v3 import RoutingFreeDeepseekV3Config
 from .modules import wrap_mlp_with_routing_free, RoutingFreeAuxLossMixin
 
 
@@ -22,6 +23,8 @@ class RoutingFreeDeepseekV3DecoderLayer(DeepseekV3DecoderLayer):
     Decoder layer that swaps the FFN with routing-free gating wrapper and
     returns optional gate_scores for aux loss.
     """
+
+    config_class = RoutingFreeDeepseekV3Config
 
     def __init__(self, config, layer_idx: int):
         super().__init__(config, layer_idx)
@@ -75,6 +78,8 @@ class RoutingFreeDeepseekV3Model(DeepseekV3Model):
     """
     DeepseekV3Model with routing-free FFN per layer and gate_scores collection.
     """
+
+    config_class = RoutingFreeDeepseekV3Config
 
     def __init__(self, config):
         super().__init__(config)
@@ -154,6 +159,8 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeAuxLossMixin, DeepseekV3ForCau
     """
     CausalLM head that uses routing-free decoder and computes aux loss from gate_scores.
     """
+
+    config_class = RoutingFreeDeepseekV3Config
 
     def __init__(self, config):
         super().__init__(config)
