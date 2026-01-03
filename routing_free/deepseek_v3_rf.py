@@ -14,7 +14,7 @@ from transformers.models.deepseek_v3.modeling_deepseek_v3 import (
     GenerationMixin,
 )
 
-from routing_free.deepseek_v3.configuration_deepseek_v3 import RoutingFreeDeepseekV3Config
+from routing_free.deepseek_v3.configuration_deepseek_v3_rf import RoutingFreeDeepseekV3Config
 from .modules import wrap_mlp_with_routing_free, RoutingFreeAuxLossMixin
 
 
