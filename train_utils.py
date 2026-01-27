@@ -140,6 +140,10 @@ def custom_data_collator(features):
 
 
 class AuxLossTrainer(Trainer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._last_logged_step = -1
+    
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         """
         Override compute_loss to extract and log auxiliary losses
@@ -147,23 +151,36 @@ class AuxLossTrainer(Trainer):
         outputs = model(**inputs)
         loss = outputs.loss if isinstance(outputs, dict) else outputs[0]
 
-        # Only log on main process
+        # Only log on main process and only once per step
         if getattr(self.args, "local_rank", 0) <= 0:
-            aux_loss = getattr(outputs, "aux_loss", None)
-            if aux_loss:
-                def format_value(val):
-                    if isinstance(val, torch.Tensor):
-                        if val.numel() == 1:
-                            val = val.item()
-                        else:
+            current_step = self.state.global_step
+            # 避免同一个 step 重复记录
+            if current_step > self._last_logged_step:
+                self._last_logged_step = current_step
+                
+                aux_loss = getattr(outputs, "aux_dict", None)
+                lambda_coef = getattr(outputs, "lambda_coef", None)
+                
+                if wandb.run is not None:
+                    if lambda_coef:
+                        wandb.log({"lambda_coef": lambda_coef}, step=current_step)
+                    if aux_loss:
+                        def format_value(val):
+                            if isinstance(val, torch.Tensor):
+                                if val.numel() == 1:
+                                    val = val.item()
+                                else:
+                                    return val
+                            if isinstance(val, float):
+                                return float(f"{val:.4g}")
+                            if isinstance(val, list):
+                                return [format_value(x) for x in val]
                             return val
-                    if isinstance(val, float):
-                        return float(f"{val:.4g}")
-                    if isinstance(val, list):
-                        return [format_value(x) for x in val]
-                    return val
-
-                aux_loss_dict = {k: format_value(v) for k, v in aux_loss.items()}
-                self.log(aux_loss_dict)
+                        
+                        lm_loss = getattr(outputs, "lm_loss", None)
+                        aux_loss_dict = {k: format_value(v) for k, v in aux_loss.items()}
+                        if lm_loss is not None:
+                            aux_loss_dict["lm_loss"] = format_value(lm_loss)
+                        wandb.log(aux_loss_dict, step=current_step)
 
         return (loss, outputs) if return_outputs else loss

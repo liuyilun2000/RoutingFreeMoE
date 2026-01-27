@@ -1,21 +1,21 @@
 import torch
 from torch import nn
-from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast, MoeModelOutputWithPast, MoeCausalLMOutputWithPast
 from transformers.utils.generic import check_model_inputs
 
 from transformers.models.deepseek_v3.modeling_deepseek_v3 import (
     DeepseekV3Model,
     DeepseekV3ForCausalLM,
     DeepseekV3DecoderLayer,
-    DeepseekV3RMSNorm,
-    DeepseekV3Attention,
     create_causal_mask,
+    DeepseekV3MoE,
     DynamicCache,
-    GenerationMixin,
 )
 
 from routing_free.deepseek_v3.configuration_deepseek_v3_rf import RoutingFreeDeepseekV3Config
-from .modules import wrap_mlp_with_routing_free, RoutingFreeAuxLossMixin
+from .modules import wrap_mlp_with_routing_free, RoutingFreeAuxLossMixin, RoutingFreeMaskedMoE
+
+from dataclasses import dataclass
 
 
 class RoutingFreeDeepseekV3DecoderLayer(DeepseekV3DecoderLayer):
@@ -29,9 +29,8 @@ class RoutingFreeDeepseekV3DecoderLayer(DeepseekV3DecoderLayer):
     def __init__(self, config, layer_idx: int):
         super().__init__(config, layer_idx)
 
-        # Replace MLP with routing-free wrapper when compatible
-        if hasattr(self.mlp, "up_proj") and hasattr(self.mlp, "down_proj") and hasattr(self.mlp, "act_fn"):
-            self.mlp = wrap_mlp_with_routing_free(self.mlp, config)
+        if layer_idx >= config.first_k_dense_replace:
+            self.mlp = build_masked_moe_from_deepseek(config, self.mlp, wrap_mlp_with_routing_free)
 
     def forward(
         self,
@@ -88,7 +87,7 @@ class RoutingFreeDeepseekV3Model(DeepseekV3Model):
             [RoutingFreeDeepseekV3DecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
 
-    @check_model_inputs
+    #@check_model_inputs
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
@@ -100,7 +99,7 @@ class RoutingFreeDeepseekV3Model(DeepseekV3Model):
         use_cache: bool | None = None,
         output_gate_scores: bool = True,
         **kwargs,
-    ) -> BaseModelOutputWithPast:
+    ) -> MoeModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
@@ -141,12 +140,13 @@ class RoutingFreeDeepseekV3Model(DeepseekV3Model):
                 cache_position=cache_position,
                 **kwargs,
             )
+            # gate_score [B,L,n_experts]
             if output_gate_scores:
                 gate_scores_all.append(gate_score)
 
         hidden_states = self.norm(hidden_states)
 
-        outputs = BaseModelOutputWithPast(
+        outputs = MoeModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
         )
@@ -154,6 +154,11 @@ class RoutingFreeDeepseekV3Model(DeepseekV3Model):
             outputs.router_logits = gate_scores_all  # attach for aux loss
         return outputs
 
+@dataclass
+class RoutingFreeMoEOutput(CausalLMOutputWithPast):
+    aux_dict: dict = None
+    router_logits: list[torch.FloatTensor] = None
+    lm_loss: float = None
 
 class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeAuxLossMixin, DeepseekV3ForCausalLM):
     """
@@ -182,11 +187,13 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeAuxLossMixin, DeepseekV3ForCau
         use_cache=None,
         cache_position=None,
         logits_to_keep: int | torch.Tensor = 0,
-        output_gate_scores: bool = True,
+        output_gate_scores: bool | None = None,
         **kwargs,
-    ) -> CausalLMOutputWithPast:
+    ) -> RoutingFreeMoEOutput:
+        if output_gate_scores is None:
+            output_gate_scores = self.training
 
-        outputs: BaseModelOutputWithPast = self.model(
+        outputs: MoeModelOutputWithPast = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -205,25 +212,38 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeAuxLossMixin, DeepseekV3ForCau
         loss = None
         if labels is not None:
             loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
+            lm_loss = loss.item()
 
         aux_loss = None
         aux_dict = None
         gate_scores = getattr(outputs, "router_logits", None) if output_gate_scores else None
-        aux_loss, aux_dict, new_lambda = self.compute_routing_free_aux(gate_scores, self.config, self.training)
-        if self.training and aux_loss is not None and loss is not None:
-            loss = loss + aux_loss
-        self.lambda_coef = new_lambda
+        if self.training and gate_scores is not None:
+            aux_loss, aux_dict, new_lambda = self.compute_routing_free_aux(gate_scores, self.config, self.training)
+            if aux_loss is not None and loss is not None:
+                loss = loss + aux_loss
+            self.lambda_coef = new_lambda
 
-        out = CausalLMOutputWithPast(
+        out = RoutingFreeMoEOutput(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=getattr(outputs, "hidden_states", None),
             attentions=getattr(outputs, "attentions", None),
+            aux_dict=aux_dict,
+            router_logits=gate_scores,
+            lm_loss=lm_loss,
         )
-        out.aux_loss = aux_dict
-        out.router_logits = gate_scores
         return out
+
+def build_masked_moe_from_deepseek(cfg, deepseek_moe: nn.Module, wrap_fn):
+    """
+    从 DeepSeek MoE 构建 routing-free MaskedMoE：
+    - wrap_fn: 对单个 expert 进行 routing-free 封装的函数
+    - shared_expert 保持原样
+    """
+    wrapped_experts = [wrap_fn(e, cfg) for e in deepseek_moe.experts]
+    shared_expert = deepseek_moe.shared_experts
+    return RoutingFreeMaskedMoE(cfg, wrapped_experts, shared_expert)
 
 
 __all__ = [
