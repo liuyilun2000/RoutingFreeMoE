@@ -225,14 +225,16 @@ class RoutingFreeDeepseekV3ForCausalLM(RoutingFreeAuxLossMixin, DeepseekV3ForCau
             self.lambda_coef = new_lambda
 
         # compute orthogonality loss
+        orthogonality_loss = torch.tensor(0.0, device=self.device)
         if self.training and self.config.orthogonality_loss:
-            for layer in self.model.layers:
-                orthogonality_loss = self.compute_orthogonality_loss(layer.experts) * self.config.orthogonality_loss_coef
-                if orthogonality_loss is not None:
-                    orthogonality_loss += orthogonality_loss
+            for idx, layer in enumerate(self.model.layers):
+                if idx >= self.config.first_k_dense_replace:
+                    layer_orthogonality_loss = self.compute_orthogonality_loss(layer.mlp.experts) * self.config.orthogonality_loss_coef
+                    if layer_orthogonality_loss is not None:
+                        orthogonality_loss += layer_orthogonality_loss
 
-            aux_dict["orthogonality_loss"] = orthogonality_loss.item()
-            loss = loss + orthogonality_loss
+            aux_dict["orthogonality_loss"] = orthogonality_loss.item() if orthogonality_loss is not None else None
+            loss = loss + orthogonality_loss if orthogonality_loss is not None and loss is not None else loss
 
         out = RoutingFreeMoEOutput(
             loss=loss,
