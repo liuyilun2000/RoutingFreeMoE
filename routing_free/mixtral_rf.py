@@ -38,7 +38,7 @@ class RoutingFreeMixtralConfig(MixtralConfig, RoutingFreeConfigMixin):
         gate_temperature=1.0,
         output_gate_scores=False,
         n_experts=8, # Mixtral usually has 8 experts
-        density_target=0.1,
+        density_target=0.25,
         lambda_coef=1e-5,
         eta_coef=0.2,
         per_expert_aux_loss_coef=0.5,
