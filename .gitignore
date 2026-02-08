@@ -188,3 +188,17 @@ init_baseline/
 *.out
 *.log
 *.png
+
+
+*.err
+*.out
+
+# all md except README.md
+*.md
+!README.md
+
+.vscode
+hkfswork
+logs
+output_baseline_mixtral
+roneneldan

@@ -305,11 +305,20 @@ class RoutingFreeAuxLossMixin:
 
         new_lambda = lambda_coef
         if training and aux_loss is not None:
-            new_lambda = lambda_coef * (1 + eta_coef * (density - density_target) ** 2) ** torch.sign(density - density_target)
-            #new_lambda = lambda_coef * (1 + eta_coef * abs(density - density_target)) ** torch.sign(density - density_target)
-            #new_lambda = lambda_coef * eta_coef ** torch.sign(density - density_target)
+            #new_lambda = lambda_coef * (1 + eta_coef * (density - density_target) ** 2) ** torch.sign(density - density_target)
+            #update_factor = (1 + eta_coef * (density - density_target) ** 2) ** torch.sign(density - density_target)
+            
+            #max_step = getattr(cfg, "lambda_max_step", 0.02) 
+            #if update_factor > 1.01 and lambda_coef > 0.1:
+                #import pdb; pdb.set_trace()
+            #update_factor = torch.clamp(update_factor, 1.0 - max_step, 1.0 + max_step)
+            
+            #new_lambda = lambda_coef * update_factor
+            update_factor = 1.02 ** torch.sign(density - density_target)
+            new_lambda = lambda_coef * update_factor
             new_lambda = torch.clamp(new_lambda, max=1.0)
             if hasattr(self, "lambda_coef"):
+                # limit relative update scale
                 self.lambda_coef = new_lambda
                 self.sync_lambda_coef()
 

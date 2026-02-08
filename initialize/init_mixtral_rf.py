@@ -56,9 +56,10 @@ def initialize_model(
     # Mixtral structural params
     config.num_hidden_layers = num_hidden_layers
     config.intermediate_size = intermediate_size # This is likely 'moe_intermediate_size' in RF context context if decomposed, but MixtralConfig uses intermediate_size for the experts.
-    config.hidden_size = hidden_size
-    config.num_attention_heads = num_attention_heads
-    config.num_key_value_heads = num_key_value_heads
+    # Init from config as requested
+    hidden_size = config.hidden_size
+    num_attention_heads = config.num_attention_heads
+    num_key_value_heads = config.num_key_value_heads
     
     # Routing Free params
     config.n_experts = n_experts
@@ -112,7 +113,7 @@ def main():
         output_dir=args.output_dir,
         model_name=args.model_name,
         tokenizer_model=args.tokenizer_model,
-        bf16=args.bf16
+        bf16=args.bf16,
     )
 
 if __name__ == "__main__":

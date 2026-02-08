@@ -50,3 +50,5 @@ model = AutoModelForCausalLM.from_pretrained(
 
 
 watch -n 10 -d squeue
+
+srun --jobid 1234567 --overlap --pty nvidia-smi

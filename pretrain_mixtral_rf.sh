@@ -2,7 +2,7 @@
 #SBATCH --partition=accelerated
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
-#SBATCH --time=3:59:00
+#SBATCH --time=11:59:00
 #SBATCH --mail-type=NONE
 
 export WANDB_API_KEY="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"
@@ -31,14 +31,18 @@ RUN_NAME="mixtral_rf_${config}x${n_experts}E_temp_${GATE_TEMPERATURE}_thres_${GA
 # Point to initialized Mixtral RF model
 MODEL_DIR=${1:-./init_mixtral_rf/RoutingFreeMixtral_${config}}
 OUTPUT_DIR=${4:-./output/mixtral_rf/${RUN_NAME}}
-DATASET_NAME=${5:-roneneldan/TinyStories}
+DATASET_NAME=${5:-Skylion007/openwebtext}
+#DATASET_NAME=${5:-roneneldan/TinyStories}
 #DATASET_NAME=${5:-cerebras/SlimPajama-627B}
-#PREPROCESSING_CACHE_DIR=${12:-/hkfs/work/workspace/scratch/hgf_mxv5488-slimpajama}
-#HF_CACHE_DIR=${13:-/hkfs/work/workspace/scratch/hgf_mxv5488-slimpajama}
+
+# Define Workspace Path
+WORKSPACE_DIR="/hkfs/work/workspace/scratch/hgf_mxv5488-myspace"
+PREPROCESSING_CACHE_DIR=${12:-${WORKSPACE_DIR}/mapped_datasets}
+HF_CACHE_DIR=${13:-${WORKSPACE_DIR}/hf_cache}
 EPOCHS=${6:-1}
 LR=${7:-5e-4} # 5e-4
 BATCH_SIZE=${8:-32} # 32
-GRAD_ACCUM=${9:-1} # 2
+GRAD_ACCUM=${9:-2} # 2
 WANDB_PROJECT=${10:-mixtral-baseline} # routing-free-mixtral
 WANDB_RUN=${11:-${RUN_NAME}}
 

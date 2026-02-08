@@ -44,12 +44,6 @@ AutoModelForCausalLM.register(RoutingFreeDeepseekV3Config, RoutingFreeDeepseekV3
 from utils import *
 from train_utils import preprocess_function_factory, preprocess_and_cache_dataset, AuxLossTrainer
 
-import numpy as np
-
-AutoConfig.register("routing_free_deepseek_v3", RoutingFreeDeepseekV3Config)
-AutoModel.register(RoutingFreeDeepseekV3Config, RoutingFreeDeepseekV3Model)
-AutoModelForCausalLM.register(RoutingFreeDeepseekV3Config, RoutingFreeDeepseekV3ForCausalLM)
-
 base_model = "deepseek-ai/DeepSeek-V3"
 tokenizer_model = "EleutherAI/gpt-neo-125M"
 
@@ -64,7 +58,9 @@ def train(
     preprocessing_cache_dir: str = "../mapped_datasets",
     hf_cache_dir: str = None,
     # Model config params
-    n_hidden_layers: int = 12,
+    num_hidden_layers: int = 12,
+    num_attention_heads: int = 16,
+    num_key_value_heads: int = 16,
     n_experts: int = 24,
     moe_intermediate_size: int = 128,
     gate_temperature: float = 1.0,
@@ -116,9 +112,16 @@ def train(
     # Load model and tokenizer
     print(f"Rank {local_rank} / {world_size} : {torch.cuda.mem_get_info()}")
     config = RoutingFreeDeepseekV3Config.from_pretrained(model_dir)
+    config.n_hidden_layers = num_hidden_layers
+    config.n_attention_heads = num_attention_heads
+    config.n_key_value_heads = num_key_value_heads
     config.output_gate_scores = True
-    if config.n_hidden_layers != n_hidden_layers:
-        raise ValueError(f"Number of hidden layers in config ({config.n_hidden_layers}) does not match the provided value ({n_hidden_layers})")
+    if config.num_hidden_layers != num_hidden_layers:
+        raise ValueError(f"Number of hidden layers in config ({config.num_hidden_layers}) does not match the provided value ({num_hidden_layers})")
+    if config.num_attention_heads != num_attention_heads:
+        raise ValueError(f"Number of attention heads in config ({config.num_attention_heads}) does not match the provided value ({num_attention_heads})")
+    if config.num_key_value_heads != num_key_value_heads:
+        raise ValueError(f"Number of key value heads in config ({config.num_key_value_heads}) does not match the provided value ({num_key_value_heads})")
     if config.n_experts < n_experts:
         raise ValueError(f"Number of experts in config ({config.n_experts}) is less than the provided value ({n_experts})")
     config.n_experts = n_experts
@@ -136,14 +139,17 @@ def train(
     model = RoutingFreeDeepseekV3ForCausalLM.from_pretrained(
         model_dir,
         config=config,
-        torch_dtype=torch.bfloat16 if bf16 else torch.float32,
+        #torch_dtype=torch.bfloat16 if bf16 else torch.float32,
+        dtype=torch.bfloat16 if bf16 else torch.float32,
         ignore_mismatched_sizes=True,
         #device_map='cuda'
     )
-    model.config.use_cache = False
+    model.config.use_cache = True
     if local_rank <= 0:
         print(model.config)
+        print_trainable_parameters(model)
     
+    '''
     if world_size > 1 and local_rank != -1:
         model = model.to(device)
         model = torch.nn.parallel.DistributedDataParallel(
@@ -152,6 +158,7 @@ def train(
             output_device=local_rank,
             find_unused_parameters=True  # Enable to handle unused parameters
         )
+    '''
 
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
     tokenizer.pad_token = tokenizer.eos_token
@@ -173,7 +180,14 @@ def train(
     load_dataset_kwargs = {"num_proc": n_workers}
     if hf_cache_dir is not None:
         load_dataset_kwargs["cache_dir"] = hf_cache_dir
-    dataset = load_dataset(dataset_name, **load_dataset_kwargs)
+    #dataset = load_dataset(dataset_name, **load_dataset_kwargs)
+    dataset = load_dataset(
+        "parquet",
+        data_files={
+            "train": "hf://datasets/roneneldan/TinyStories/data/train-*.parquet",
+            "validation": "hf://datasets/roneneldan/TinyStories/data/validation-*.parquet",
+        },
+    )
     split_dataset = dataset["train"].train_test_split(test_size=test_size, seed=2357, shuffle=True)
     if local_rank <= 0:
         print(split_dataset)
@@ -228,6 +242,7 @@ def train(
         print(f"Max steps: {max_steps} | not used in trainer")
         print(f"Model: {model}")
         print("============================\n")
+        #import pdb; pdb.set_trace()
     
     # Prepare training arguments
     training_args = transformers.TrainingArguments(
@@ -241,6 +256,7 @@ def train(
         # Add DDP-specific arguments
         local_rank=local_rank,
         ddp_backend="nccl",
+        ddp_find_unused_parameters=True,
         dataloader_pin_memory=True,  # Important for performance
         
         learning_rate=learning_rate,
@@ -307,7 +323,11 @@ def main():
                       help="Output directory")
     parser.add_argument("--num-hidden-layers", type=int, default=12,
                       help="Number of hidden layers")
-    parser.add_argument("--n-experts", type=int, default=24,
+    parser.add_argument("--num-attention-heads", type=int, default=16,
+                      help="Number of attention heads")
+    parser.add_argument("--num-key-value-heads", type=int, default=16,
+                      help="Number of key value heads")
+    parser.add_argument("--n-experts", type=int, default=12,
                       help="Number of experts")
     parser.add_argument("--moe-intermediate-size", type=int, default=128,
                       help="MOE intermediate size")
@@ -339,7 +359,7 @@ def main():
                       help="Resume from checkpoint")
     parser.add_argument("--per_device_batch_size", type=int, default=16,
                       help="Per device batch size")
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=4,
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=2,
                       help="Number of gradient accumulation steps")
     parser.add_argument("--preprocessing_cache_dir", type=str, default="../mapped_datasets",
                       help="Directory for caching preprocessed datasets")
@@ -350,12 +370,13 @@ def main():
     parser.add_argument("--orthogonality-loss-coef", type=float, default=1e-5,
                       help="Orthogonality loss coefficient")
     args = parser.parse_args()
-    
     train(
         model_dir=args.model_dir,
         dataset_name=args.dataset_name,
         output_dir=args.output_dir,
-        n_hidden_layers=args.n_hidden_layers,
+        num_hidden_layers=args.num_hidden_layers,
+        num_attention_heads=args.num_attention_heads,
+        num_key_value_heads=args.num_key_value_heads,
         n_experts=args.n_experts,
         moe_intermediate_size=args.moe_intermediate_size,
         gate_temperature=args.gate_temperature,
@@ -375,6 +396,8 @@ def main():
         resume_from_checkpoint=args.resume_from_checkpoint,
         preprocessing_cache_dir=args.preprocessing_cache_dir,
         hf_cache_dir=args.hf_cache_dir,
+        orthogonality_loss=args.orthogonality_loss,
+        orthogonality_loss_coef=args.orthogonality_loss_coef,
     )
 
 if __name__ == "__main__":

@@ -129,7 +129,7 @@ def train(
             model,
             device_ids=[local_rank],
             output_device=local_rank,
-            find_unused_parameters=False  # Important for performance
+            find_unused_parameters=True  # Important for performance
         )
             
     print(local_rank, model)
@@ -155,7 +155,14 @@ def train(
     load_dataset_kwargs = {"num_proc": n_workers}
     if hf_cache_dir is not None:
         load_dataset_kwargs["cache_dir"] = hf_cache_dir
-    dataset = load_dataset(dataset_name, **load_dataset_kwargs)
+    #dataset = load_dataset(dataset_name, **load_dataset_kwargs)
+    dataset = load_dataset(
+        "parquet",
+        data_files={
+            "train": "hf://datasets/roneneldan/TinyStories/data/train-*.parquet",
+            "validation": "hf://datasets/roneneldan/TinyStories/data/validation-*.parquet",
+        },
+    )
     split_dataset = dataset["train"].train_test_split(test_size=test_size, seed=2357, shuffle=True)
     if local_rank <= 0:
         print(split_dataset)
@@ -290,7 +297,7 @@ def main():
                       help="Number of hidden layers")
     parser.add_argument("--n-shared-experts", type=int, default=1,
                       help="Number of shared experts")
-    parser.add_argument("--n-routed-experts", type=int, default=23,
+    parser.add_argument("--n-routed-experts", type=int, default=12, # 23
                       help="Number of routed experts")
     parser.add_argument("--moe-intermediate-size", type=int, default=128,
                       help="MOE intermediate size")

@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --partition=accelerated
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:1
-#SBATCH --time=12:00:00
+#SBATCH --gres=gpu:4
+#SBATCH --time=10:00:00
 #SBATCH --mail-type=ALL
 
 source /hkfs/home/project/hk-project-p0022189/hgf_mxv5488/miniconda3/bin/activate py310
@@ -14,18 +14,18 @@ n_experts=$((n_shared_experts + n_routed_experts))
 moe_intermediate_size=128
 
 config="${n_hidden_layers}L_${moe_intermediate_size}D"
-RUN_NAME="baseline_${config}x${n_experts}E[${n_shared_experts}S_${n_routed_experts}R]"
+RUN_NAME="1_baseline_${config}x${n_experts}E[${n_shared_experts}S_${n_routed_experts}R]"
 
 MODEL_DIR=${1:-./init_baseline/DeepSeekV3_${config}}
 OUTPUT_DIR=${4:-./output_baseline/${RUN_NAME}}
-#DATASET_NAME=${5:-roneneldan/TinyStories}
-DATASET_NAME=${5:-cerebras/SlimPajama-627B}
-PREPROCESSING_CACHE_DIR=${12:-/hkfs/work/workspace/scratch/hgf_mxv5488-slimpajama}
-HF_CACHE_DIR=${13:-/hkfs/work/workspace/scratch/hgf_mxv5488-slimpajama}
+DATASET_NAME=${5:-roneneldan/TinyStories}
+#DATASET_NAME=${5:-cerebras/SlimPajama-627B}
+#PREPROCESSING_CACHE_DIR=${12:-/hkfs/work/workspace/scratch/hgf_mxv5488-slimpajama}
+#HF_CACHE_DIR=${13:-/hkfs/work/workspace/scratch/hgf_mxv5488-slimpajama}
 EPOCHS=${6:-1}
 LR=${7:-5e-4}
 BATCH_SIZE=${8:-32}
-GRAD_ACCUM=${9:-8}
+GRAD_ACCUM=${9:-1}
 WANDB_PROJECT=${10:-routing-free-deepseek-v3}
 WANDB_RUN=${11:-${RUN_NAME}}
 
@@ -46,7 +46,7 @@ echo "WANDB_RUN: $WANDB_RUN"
 echo "PREPROCESSING_CACHE_DIR: $PREPROCESSING_CACHE_DIR"
 echo "HF_CACHE_DIR: $HF_CACHE_DIR"
 
-torchrun --nproc_per_node 1 pretrain_baseline.py \
+torchrun --nproc_per_node 4 pretrain_baseline.py \
   --model-dir "$MODEL_DIR" \
   --output-dir "$OUTPUT_DIR" \
   --dataset-name "$DATASET_NAME" \

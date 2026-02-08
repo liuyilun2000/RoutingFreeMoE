@@ -147,6 +147,42 @@ def train(
     if hf_cache_dir is not None:
         load_dataset_kwargs["cache_dir"] = hf_cache_dir
     #dataset = load_dataset(dataset_name, **load_dataset_kwargs)
+    dataset = None
+    if dataset_name == "Skylion007/openwebtext":
+        dataset = load_dataset(dataset_name, **load_dataset_kwargs)
+        # OpenWebText usually only has 'train' split. We need to split it.
+        split_dataset = dataset["train"].train_test_split(test_size=test_size, seed=2357, shuffle=True)
+        split_dataset['val'] = split_dataset.pop('test')
+        train_dataset = split_dataset["train"]
+        val_dataset = split_dataset["val"]
+    else:
+        if dataset_name == "roneneldan/TinyStories":
+             dataset = load_dataset(
+                "parquet",
+                data_files={
+                    "train": "hf://datasets/roneneldan/TinyStories/data/train-*.parquet",
+                    "validation": "hf://datasets/roneneldan/TinyStories/data/validation-*.parquet",
+                },
+                **load_dataset_kwargs
+            )
+             split_dataset = dataset["train"].train_test_split(test_size=test_size, seed=2357, shuffle=True)
+             split_dataset['val'] = split_dataset.pop('test') 
+             train_dataset = split_dataset["train"]
+             val_dataset = split_dataset["val"]
+        else:
+             # Generic load
+             dataset = load_dataset(dataset_name, **load_dataset_kwargs)
+             if "validation" not in dataset:
+                  split_dataset = dataset["train"].train_test_split(test_size=test_size, seed=2357, shuffle=True)
+                  split_dataset['val'] = split_dataset.pop('test')
+                  train_dataset = split_dataset["train"]
+                  val_dataset = split_dataset["val"]
+             else:
+                  train_dataset = dataset["train"]
+                  val_dataset = dataset["validation"]
+
+    # Original hardcoded TinyStories block (commented out as requested reference)
+    '''
     dataset = load_dataset(
         "parquet",
         data_files={
@@ -161,6 +197,7 @@ def train(
     
     train_dataset = split_dataset["train"]
     val_dataset = split_dataset["val"]
+    '''
     '''
     dataset_cache = os.path.join(dataset_cache_dir, dataset_name)
     train_dataset, val_dataset = create_splits(
