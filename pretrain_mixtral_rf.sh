@@ -23,10 +23,9 @@ ETA_COEF=0.05
 #ETA_COEF=0.1
 PER_EXPERT_AUX_LOSS_COEF=0.5
 PER_TOKEN_AUX_LOSS_COEF=0.5
-ORTHOGONALITY_LOSS_COEF=0.0
 
 config="${num_hidden_layers}L_${intermediate_size}D"
-RUN_NAME="mixtral_rf_${config}x${n_experts}E_temp_${GATE_TEMPERATURE}_thres_${GATE_THRESHOLD}_density_${DENSITY_TARGET}_lambda_${LAMBDA_COEF}_eta_${ETA_COEF}_ortho_${ORTHOGONALITY_LOSS_COEF}_aux_[E${PER_EXPERT_AUX_LOSS_COEF}_T${PER_TOKEN_AUX_LOSS_COEF}]"
+RUN_NAME="mixtral_rf_${config}x${n_experts}E_temp_${GATE_TEMPERATURE}_thres_${GATE_THRESHOLD}_density_${DENSITY_TARGET}_lambda_${LAMBDA_COEF}_eta_${ETA_COEF}_aux_[E${PER_EXPERT_AUX_LOSS_COEF}_T${PER_TOKEN_AUX_LOSS_COEF}]"
 
 # Point to initialized Mixtral RF model
 MODEL_DIR=${1:-./init_mixtral_rf/RoutingFreeMixtral_${config}}
@@ -94,5 +93,4 @@ torchrun --nproc_per_node 4 pretrain_mixtral_rf.py \
   --wandb-run "$WANDB_RUN" \
   --bf16 \
   --preprocessing_cache_dir "$PREPROCESSING_CACHE_DIR" \
-  $(if [ -n "$HF_CACHE_DIR" ]; then echo "--hf-cache-dir $HF_CACHE_DIR"; fi) \
-  --orthogonality-loss-coef "$ORTHOGONALITY_LOSS_COEF"
+  $(if [ -n "$HF_CACHE_DIR" ]; then echo "--hf-cache-dir $HF_CACHE_DIR"; fi)

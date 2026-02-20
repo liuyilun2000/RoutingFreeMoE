@@ -88,9 +88,7 @@ def train(
     seed: int = 42,
     bf16: bool = True,
     n_workers: int = 32,
-    resume_from_checkpoint: str = None, 
-    orthogonality_loss: bool = True,
-    orthogonality_loss_coef: float = 1e-5,
+    resume_from_checkpoint: str = None,
 ):
     # Set debug environment variable for distributed training issues
     os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
@@ -134,8 +132,6 @@ def train(
     config.eta_coef = eta_coef
     config.per_expert_aux_loss_coef = per_expert_aux_loss_coef
     config.per_token_aux_loss_coef = per_token_aux_loss_coef
-    config.orthogonality_loss = orthogonality_loss
-    config.orthogonality_loss_coef = orthogonality_loss_coef
     model = RoutingFreeDeepseekV3ForCausalLM.from_pretrained(
         model_dir,
         config=config,
@@ -365,10 +361,6 @@ def main():
                       help="Directory for caching preprocessed datasets")
     parser.add_argument("--hf-cache-dir", type=str, default=None,
                       help="Directory for Hugging Face dataset cache")
-    parser.add_argument("--orthogonality-loss", type=bool, default=True,
-                      help="Use orthogonality loss")
-    parser.add_argument("--orthogonality-loss-coef", type=float, default=1e-5,
-                      help="Orthogonality loss coefficient")
     args = parser.parse_args()
     train(
         model_dir=args.model_dir,
@@ -396,8 +388,6 @@ def main():
         resume_from_checkpoint=args.resume_from_checkpoint,
         preprocessing_cache_dir=args.preprocessing_cache_dir,
         hf_cache_dir=args.hf_cache_dir,
-        orthogonality_loss=args.orthogonality_loss,
-        orthogonality_loss_coef=args.orthogonality_loss_coef,
     )
 
 if __name__ == "__main__":

@@ -348,56 +348,6 @@ class RoutingFreeAuxLossMixin:
 
         return aux_loss, aux_dict, new_lambda
 
-    def compute_orthogonality_loss(self, experts):
-        """
-        计算当前层所有 Routing Experts 的 Gate 投影矩阵之间的正交性损失。
-        这会强迫不同专家的 Gate 关注特征空间中不同的方向。
-        """
-        
-        # 1. 收集所有 Routing Experts 的 gate_proj_A 权重
-        # 根据你的 Pdb: expert.gate_proj_A 是 Linear(512, 16)
-        # PyTorch Linear 权重的 shape 是 [out_features, in_features] -> [16, 512]
-        # 我们只收集 routing experts，不要收集 shared expert (如果之后启用的话)
-        expert_weights = [expert.gate_proj_A.weight for expert in experts]
-        
-        if not expert_weights:
-            return None
-
-        # 2. 堆叠 (Stack)
-        # Shape: [Num_Experts, r, D] -> 例如 [8, 16, 512]
-        w_stack = torch.stack(expert_weights)
-        
-        N, r, D = w_stack.shape
-        
-        # 3. 展平 (Flatten)
-        # 将每个专家的矩阵 [16, 512] 拉成一个长向量 [8192]
-        # 我们认为整个投影矩阵代表了专家的"语义方向"
-        # Shape: [N, r * D] -> [8, 8192]
-        w_flat = w_stack.view(N, -1)
-        
-        # 4. 归一化 (L2 Normalize)
-        # 沿着特征维度 (dim=1) 做归一化，这样只比较方向，忽略参数的大小
-        w_norm = F.normalize(w_flat, p=2, dim=1)
-        
-        # 5. 计算 Gram Matrix (相似度矩阵)
-        # [N, features] @ [features, N] -> [N, N]
-        # 这里的每个元素 (i, j) 代表 Expert i 和 Expert j 的相似度 (Cosine Similarity)
-        gram_matrix = torch.mm(w_norm, w_norm.t())
-        
-        # 6. 计算 Loss
-        # 目标：Gram Matrix 应该接近单位矩阵 I (非对角线元素接近 0)
-        eye = torch.eye(N, device=w_stack.device)
-        
-        #只惩罚非对角线元素 (Off-diagonal elements)
-        # (gram_matrix - eye) 会把对角线上的 1 减成 0 (我们不惩罚自己和自己的相似度，那必须是1)
-        # 剩下的就是非对角线的相似度，我们希望它们越小越好（接近0）
-        orth_loss = torch.sum((gram_matrix - eye) ** 2)
-        
-        # (可选) 平均化：除以非对角线元素的数量 N*(N-1)，防止专家数量增加时 Loss 剧增
-        # orth_loss = orth_loss / (N * (N - 1))
-        
-        return orth_loss
-
 class RoutingFreeMaskedMoE(nn.Module):
     """
     通用的 routing-free MoE 聚合器：

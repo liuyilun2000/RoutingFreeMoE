@@ -305,7 +305,6 @@ class RoutingFreeMoEOutput(CausalLMOutputWithPast):
     aux_dict: dict = None
     router_logits: list[torch.FloatTensor] = None
     lm_loss: float = None
-    orthogonality_loss: float = None
 
 
 class RoutingFreeMixtralForCausalLM(RoutingFreeAuxLossMixin, MixtralForCausalLM):
@@ -376,25 +375,6 @@ class RoutingFreeMixtralForCausalLM(RoutingFreeAuxLossMixin, MixtralForCausalLM)
             if aux_loss is not None and loss is not None:
                 loss = loss + aux_loss
             self.lambda_coef = new_lambda
-            
-        # compute orthogonality loss
-        orthogonality_loss = torch.tensor(0.0, device=self.device)
-        orth_coef = getattr(self.config, "orthogonality_loss_coef", 0.0) # Check if config has this
-        
-        if self.training and orth_coef > 0:
-             # Iterate over layers and sum orthogonality loss
-             for layer in self.model.layers:
-                 # Check if layer has mlp.experts (it should for RF)
-                 if hasattr(layer.mlp, "experts"):
-                     layer_orth_loss = self.compute_orthogonality_loss(layer.mlp.experts) 
-                     if layer_orth_loss is not None:
-                         orthogonality_loss += layer_orth_loss
-             
-             orthogonality_loss = orthogonality_loss * orth_coef
-             aux_dict = aux_dict or {}
-             aux_dict["orthogonality_loss"] = orthogonality_loss.item()
-             if loss is not None:
-                 loss = loss + orthogonality_loss
 
         out = RoutingFreeMoEOutput(
             loss=loss,
@@ -405,7 +385,6 @@ class RoutingFreeMixtralForCausalLM(RoutingFreeAuxLossMixin, MixtralForCausalLM)
             aux_dict=aux_dict,
             router_logits=gate_scores,
             lm_loss=lm_loss,
-            orthogonality_loss=orthogonality_loss
         )
         return out
 

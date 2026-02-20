@@ -22,10 +22,9 @@ LAMBDA_COEF=1e-10
 ETA_COEF=0.1
 PER_EXPERT_AUX_LOSS_COEF=0.5
 PER_TOKEN_AUX_LOSS_COEF=0.5
-ORTHOGONALITY_LOSS_COEF=0.1
 
 config="${num_hidden_layers}L_${moe_intermediate_size}D"
-RUN_NAME="loss_${config}x${n_experts}E_temp_${GATE_TEMPERATURE}_thres_${GATE_THRESHOLD}_density_${DENSITY_TARGET}_lambda_${LAMBDA_COEF}_eta_${ETA_COEF}_ortho_${ORTHOGONALITY_LOSS_COEF}_aux_[E${PER_EXPERT_AUX_LOSS_COEF}_T${PER_TOKEN_AUX_LOSS_COEF}]"
+RUN_NAME="loss_${config}x${n_experts}E_temp_${GATE_TEMPERATURE}_thres_${GATE_THRESHOLD}_density_${DENSITY_TARGET}_lambda_${LAMBDA_COEF}_eta_${ETA_COEF}_aux_[E${PER_EXPERT_AUX_LOSS_COEF}_T${PER_TOKEN_AUX_LOSS_COEF}]"
 
 MODEL_DIR=${1:-./initNew/RoutingFreeDeepseekV3_${config}}
 OUTPUT_DIR=${4:-./output/new/${RUN_NAME}}
@@ -88,5 +87,4 @@ torchrun --nproc_per_node 4 pretrain.py \
   --wandb-run "$WANDB_RUN" \
   --bf16 \
   --preprocessing_cache_dir "$PREPROCESSING_CACHE_DIR" \
-  $(if [ -n "$HF_CACHE_DIR" ]; then echo "--hf-cache-dir $HF_CACHE_DIR"; fi) \
-  --orthogonality-loss-coef "$ORTHOGONALITY_LOSS_COEF"
+  $(if [ -n "$HF_CACHE_DIR" ]; then echo "--hf-cache-dir $HF_CACHE_DIR"; fi)

@@ -181,9 +181,6 @@ class AuxLossTrainer(Trainer):
                         aux_loss_dict = {k: format_value(v) for k, v in aux_loss.items()}
                         if lm_loss is not None:
                             aux_loss_dict["lm_loss"] = format_value(lm_loss)
-                        orthogonality_loss = getattr(outputs, "orthogonality_loss", None)
-                        if orthogonality_loss is not None:
-                            aux_loss_dict["orthogonality_loss"] = format_value(orthogonality_loss)
                         wandb.log(aux_loss_dict, step=current_step)
 
         return (loss, outputs) if return_outputs else loss
