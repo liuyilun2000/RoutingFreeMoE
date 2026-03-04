@@ -10,7 +10,7 @@ salloc -p large -N 1 -n 8 -t 12:00:00 --mem=3000gb
 
 salloc -p dev_accelerated -t 0:59:00 --gres=gpu:1
 
-salloc -p accelerated -t 8:00:00 --gres=gpu:4
+salloc -p accelerated -t 8:00:00 --gres=gpu:1
 
 
 salloc -p dev_accelerated-h100 -t 0:59:00 --gres=gpu:4

@@ -154,33 +154,35 @@ class AuxLossTrainer(Trainer):
         # Only log on main process and only once per step
         if getattr(self.args, "local_rank", 0) <= 0:
             current_step = self.state.global_step
-            # 避免同一个 step 重复记录
-            if current_step > self._last_logged_step:
+            # Only log at the frequency specified by logging_steps to prevent massive I/O overhead
+            if current_step > self._last_logged_step and current_step > 0 and current_step % self.args.logging_steps == 0:
                 self._last_logged_step = current_step
                 
                 aux_loss = getattr(outputs, "aux_dict", None)
                 lambda_coef = getattr(outputs, "lambda_coef", None)
                 
                 if wandb.run is not None:
+                    def format_value(val):
+                        if isinstance(val, torch.Tensor):
+                            if val.numel() == 1:
+                                val = val.item()
+                            else:
+                                return val
+                        if isinstance(val, float):
+                            return float(f"{val:.4g}")
+                        if isinstance(val, list):
+                            return [format_value(x) for x in val]
+                        return val
+
+                    log_dict = {}
                     if lambda_coef:
-                        wandb.log({"lambda_coef": lambda_coef}, step=current_step)
+                        log_dict["lambda_coef"] = lambda_coef
                     if aux_loss:
-                        def format_value(val):
-                            if isinstance(val, torch.Tensor):
-                                if val.numel() == 1:
-                                    val = val.item()
-                                else:
-                                    return val
-                            if isinstance(val, float):
-                                return float(f"{val:.4g}")
-                            if isinstance(val, list):
-                                return [format_value(x) for x in val]
-                            return val
-                        
                         lm_loss = getattr(outputs, "lm_loss", None)
-                        aux_loss_dict = {k: format_value(v) for k, v in aux_loss.items()}
+                        log_dict.update({k: format_value(v) for k, v in aux_loss.items()})
                         if lm_loss is not None:
-                            aux_loss_dict["lm_loss"] = format_value(lm_loss)
-                        wandb.log(aux_loss_dict, step=current_step)
+                            log_dict["lm_loss"] = format_value(lm_loss)
+                    if log_dict:
+                        wandb.log(log_dict, step=current_step)
 
         return (loss, outputs) if return_outputs else loss

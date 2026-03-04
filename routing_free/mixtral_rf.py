@@ -19,7 +19,7 @@ from transformers.masking_utils import create_causal_mask
 from typing import Optional#, Unpack
 from dataclasses import dataclass
 
-from routing_free.deepseek_v3.configuration_deepseek_v3_rf import RoutingFreeConfigMixin
+from .modules import RoutingFreeConfigMixin
 from .modules import wrap_mlp_with_routing_free, RoutingFreeAuxLossMixin, RoutingFreeMaskedMoE
 
 class RoutingFreeMixtralConfig(MixtralConfig, RoutingFreeConfigMixin):

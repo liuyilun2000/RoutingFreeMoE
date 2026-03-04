@@ -1,34 +1,39 @@
 #!/bin/bash
-#SBATCH --partition=accelerated
+#SBATCH --partition=accelerated-h100
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
-#SBATCH --time=11:59:00
+#SBATCH --time=23:59:00
 #SBATCH --mail-type=NONE
 
 export WANDB_API_KEY="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"
+#export WANDB_WATCH="false"
+export WANDB_LOG_MODEL="false"
+export WANDB_SILENT="true"
 
 source /hkfs/home/project/hk-project-p0022189/hgf_mxv5488/miniconda3/bin/activate py310
 
-num_hidden_layers=12
-num_attention_heads=16
+num_hidden_layers=32
+num_attention_heads=32
 num_key_value_heads=16
-n_experts=12
-intermediate_size=128
+n_experts=24
+intermediate_size=256
 
 GATE_TEMPERATURE=1.0
 GATE_THRESHOLD=1.0
 DENSITY_TARGET=0.25
 LAMBDA_COEF=1e-10
-ETA_COEF=0.05
-#ETA_COEF=0.1
+ETA_COEF=0.02
 PER_EXPERT_AUX_LOSS_COEF=0.5
 PER_TOKEN_AUX_LOSS_COEF=0.5
+LEARNING_RATE=5e-4
+GATE_PROJ_RANK=64
 
-config="${num_hidden_layers}L_${intermediate_size}D"
-RUN_NAME="mixtral_rf_${config}x${n_experts}E_temp_${GATE_TEMPERATURE}_thres_${GATE_THRESHOLD}_density_${DENSITY_TARGET}_lambda_${LAMBDA_COEF}_eta_${ETA_COEF}_aux_[E${PER_EXPERT_AUX_LOSS_COEF}_T${PER_TOKEN_AUX_LOSS_COEF}]"
+config="${num_hidden_layers}L_${intermediate_size}D_rank${GATE_PROJ_RANK}"
+RUN_NAME="L_rf_lr_${LEARNING_RATE}_rank_${GATE_PROJ_RANK}"
 
 # Point to initialized Mixtral RF model
-MODEL_DIR=${1:-./init_mixtral_rf/RoutingFreeMixtral_${config}}
+#MODEL_DIR=${1:-./init_mixtral_rf/RoutingFreeMixtral_${config}}
+MODEL_DIR=${1:-./config/RoutingFreeMixtral_${config}}
 OUTPUT_DIR=${4:-./output/mixtral_rf/${RUN_NAME}}
 DATASET_NAME=${5:-Skylion007/openwebtext}
 #DATASET_NAME=${5:-roneneldan/TinyStories}
@@ -39,9 +44,9 @@ WORKSPACE_DIR="/hkfs/work/workspace/scratch/hgf_mxv5488-myspace"
 PREPROCESSING_CACHE_DIR=${12:-${WORKSPACE_DIR}/mapped_datasets}
 HF_CACHE_DIR=${13:-${WORKSPACE_DIR}/hf_cache}
 EPOCHS=${6:-1}
-LR=${7:-5e-4} # 5e-4
-BATCH_SIZE=${8:-32} # 32
-GRAD_ACCUM=${9:-2} # 2
+LR=${7:-$LEARNING_RATE}
+BATCH_SIZE=${8:-16} # 32
+GRAD_ACCUM=${9:-4} # 2
 WANDB_PROJECT=${10:-mixtral-baseline} # routing-free-mixtral
 WANDB_RUN=${11:-${RUN_NAME}}
 

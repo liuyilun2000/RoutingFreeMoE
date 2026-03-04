@@ -150,47 +150,58 @@ class RoutingFreeFFNWrapper(nn.Module):
             gate_score_full (or None): Same shape as x[...,0]
         """
         gate_mask_full, gate_score_full, gate_hidden = self.gate(x, mask)
-        gate_score_flat = gate_score_full.view(-1)
         gate_mask_flat = gate_mask_full.view(-1)
 
         orig_shape = x.shape
         x_flat = x.view(-1, orig_shape[-1])
         mlp_out_flat = torch.zeros_like(x_flat)
 
-        if mask is not None and not mask.any():
-            idx = torch.nonzero(mask, as_tuple=False).squeeze(-1)  # [N], N = number of True tokens
-            x_valid = x_flat[idx]  # [N, H]
-        else:
-            idx = torch.arange(x_flat.shape[0], device=x.device)
-            x_valid = x_flat
+        if gate_mask_flat.any():
+            x_valid = x_flat[gate_mask_flat]
+            gate_hidden_valid = gate_hidden[gate_mask_flat]
+            # gate_score_full already has -inf for inactive tokens (built in RoutingFreeGate);
+            # just extract scores at active positions for weighting the FFN output.
+            gate_score_valid = gate_score_full.view(-1)[gate_mask_flat]
+            mlp_out_valid = self.down_proj(self.act_fn(self.gate_proj_B(gate_hidden_valid)) * self.up_proj(x_valid))
+            mlp_out_flat[gate_mask_flat] = (mlp_out_valid * gate_score_valid.unsqueeze(1)).to(dtype=x.dtype)
 
-        if self.gate_proj_rank is None:
-            # standard dense mlp
-            # GLU(x) = down_proj(σ(x A_gate) B_gate)
-            mlp_out_valid = self.down_proj(self.act_fn(self.gate_proj(x_valid)) * self.up_proj(x_valid))
-            mlp_out_flat[idx[gate_mask_flat]] = mlp_out_valid
-            mlp_out = mlp_out_flat.view(orig_shape)
-            return mlp_out, None
+        mlp_out = mlp_out_flat.view(orig_shape)
+        # gate_score_full is already correctly shaped and filled by RoutingFreeGate — no rebuild needed.
+        return mlp_out, gate_score_full if self.output_gate_scores else None
+        
+    def forward_ffn(
+        self,
+        x_flat: torch.Tensor,
+        gate_hidden: torch.Tensor,
+        gate_score_flat: torch.Tensor,
+        gate_mask_flat: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        FFN-only path used by RoutingFreeMaskedMoE when gate scores are
+        pre-computed externally via a batched gate_proj_A matmul.
 
+        Args:
+            x_flat:          [N, H]  — all tokens, flattened
+            gate_hidden:     [N, R]  — raw gate_proj_A output for this expert
+            gate_score_flat: [N]     — gate score after scale/bias (weights FFN output)
+            gate_mask_flat:  [N]     — boolean, which tokens are active
+        Returns:
+            mlp_out_flat: [N, H]
+        """
+        mlp_out_flat = torch.zeros_like(x_flat)
         if gate_mask_flat.any():
             x_valid = x_flat[gate_mask_flat]
             gate_hidden_valid = gate_hidden[gate_mask_flat]
             gate_score_valid = gate_score_flat[gate_mask_flat]
-            mlp_out_valid = self.down_proj(self.act_fn(self.gate_proj_B(gate_hidden_valid)) * self.up_proj(x_valid))
-            mlp_out_valid = mlp_out_valid * gate_score_valid.unsqueeze(1)
-            mlp_out_valid = mlp_out_valid.to(dtype=x.dtype)
-            mlp_out_flat[idx[gate_mask_flat]] = mlp_out_valid
+            mlp_out_valid = self.down_proj(
+                self.act_fn(self.gate_proj_B(gate_hidden_valid)) * self.up_proj(x_valid)
+            )
+            mlp_out_flat[gate_mask_flat] = (
+                mlp_out_valid * gate_score_valid.unsqueeze(1)
+            ).to(dtype=x_flat.dtype)
+        return mlp_out_flat
 
-        mlp_out = mlp_out_flat.view(orig_shape)
-        if self.output_gate_scores:
-            gate_score_full = x_flat.new_ones(x_flat.shape[0], dtype=gate_score_valid.dtype) * -float('inf')
-            if gate_mask_flat.any():
-                gate_score_full[idx[gate_mask_flat]] = gate_score_valid  # Fill [B*T] with valid positions [M]
-            gate_score_full = gate_score_full.view(x.shape[0], x.shape[1])
-            return mlp_out, gate_score_full
-        else:
-            return mlp_out, None
-        
+
 def wrap_mlp_with_routing_free(mlp, cfg):
     """
     Helper: wrap an existing MLP (with up_proj/down_proj/act_fn) by routing-free gating FFN.
@@ -314,7 +325,8 @@ class RoutingFreeAuxLossMixin:
             #update_factor = torch.clamp(update_factor, 1.0 - max_step, 1.0 + max_step)
             
             #new_lambda = lambda_coef * update_factor
-            update_factor = 1.02 ** torch.sign(density - density_target)
+            
+            update_factor = (1+eta_coef) ** torch.sign(density - density_target)
             new_lambda = lambda_coef * update_factor
             new_lambda = torch.clamp(new_lambda, max=1.0)
             if hasattr(self, "lambda_coef"):
@@ -334,6 +346,7 @@ class RoutingFreeAuxLossMixin:
         }
 
         # Layer-wise expert density metrics, skip if n_experts is unknown
+        '''
         if density_proxy_per_expert is not None and density_per_expert is not None:
             n_layers = density_per_expert.numel() // n_experts
             layer_digits = len(str(n_layers - 1)) if n_layers > 0 else 1
@@ -344,7 +357,8 @@ class RoutingFreeAuxLossMixin:
                     l_str = str(l).zfill(layer_digits)
                     e_str = str(e).zfill(expert_digits)
                     aux_dict[f"expert_density_L{l_str}E{e_str}"] = float(density_per_expert[idx].detach().cpu())
-                    #aux_dict[f"expert_density_proxy_L{l_str}E{e_str}"] = float(density_proxy_per_expert[idx].detach().cpu())
+                    aux_dict[f"expert_density_proxy_L{l_str}E{e_str}"] = float(density_proxy_per_expert[idx].detach().cpu())
+        '''
 
         return aux_loss, aux_dict, new_lambda
 
@@ -364,20 +378,102 @@ class RoutingFreeMaskedMoE(nn.Module):
         self.output_gate_scores = getattr(cfg, "output_gate_scores", True)
 
     def forward(self, hidden_states: torch.Tensor, mask: torch.Tensor | None = None):
-        # collect expert outputs and scores
-        out = torch.zeros_like(hidden_states)
         orig_shape = hidden_states.shape
+        x_flat = hidden_states.view(-1, hidden_states.shape[-1])  # [N, H]
+        N = x_flat.shape[0]
+        E = len(self.experts)
+        R = self.experts[0].gate_proj_rank
+        threshold = self.config.gate_threshold / self.config.gate_temperature
 
-        expoert_gate_scores = [] if self.output_gate_scores else None
-        for expert in self.experts:
-            expert_out, expert_gate_scores = expert(hidden_states, mask)
-            out = out + expert_out.view(*orig_shape)
+        # Batch all gate_proj_A projections into one matmul instead of E separate ones.
+        # W_A: [E*R, H]  →  gate_hidden_all: [N, E*R] → [N, E, R]
+        W_A = torch.cat([e.gate_proj_A.weight for e in self.experts], dim=0)
+        gate_hidden_all = F.linear(x_flat, W_A).view(N, E, R)
+
+        # Compute all gate scores (norms) at once: [N, E]
+        # _gate_norm applies norm over the last dim, so shape [N, E, R] → [N, E]
+        gate_scores_all = self.experts[0].gate._gate_norm(gate_hidden_all)
+
+        out_flat = torch.zeros_like(x_flat)
+        expert_gate_scores_list = [] if self.output_gate_scores else None
+
+        for e, expert in enumerate(self.experts):
+            gate_hidden_e = gate_hidden_all[:, e, :].contiguous()  # [N, R]
+            gate_score_e  = gate_scores_all[:, e]                  # [N]
+
+            # Apply per-expert learnable scale / bias (same as RoutingFreeGate.forward)
+            g = expert.gate
+            if g.gate_scale is not None:
+                gate_score_e = gate_score_e * g.gate_scale
+            if g.gate_bias is not None:
+                gate_score_e = gate_score_e - g.gate_bias
+
+            gate_mask_e = gate_score_e >= threshold  # [N]
+
+            out_flat = out_flat + expert.forward_ffn(
+                x_flat, gate_hidden_e, gate_score_e, gate_mask_e
+            )
+
             if self.output_gate_scores:
-                expoert_gate_scores.append(expert_gate_scores)
-        
-        # share expert
-        #if self.shared_expert is not None:
-            #shared_out = self.shared_expert(hidden_states)
-            #out = out + shared_out.view(*orig_shape)
-            
-        return out, torch.stack(expoert_gate_scores, dim=-1) if self.output_gate_scores else None
+                score_full = gate_score_e.new_full((N,), -float('inf'))
+                if gate_mask_e.any():
+                    score_full[gate_mask_e] = gate_score_e[gate_mask_e]
+                expert_gate_scores_list.append(score_full.view(orig_shape[:-1]))
+
+        out = out_flat.view(orig_shape)
+        return (
+            out,
+            torch.stack(expert_gate_scores_list, dim=-1) if self.output_gate_scores else None,
+        )
+
+class RoutingFreeConfigMixin:
+    """Routing-free fields mixin, reusable for other MoE configs."""
+
+    routing_free_fields = (
+        "gate_proj_rank",
+        "gate_norm",
+        "gate_bias",
+        "gate_scale",
+        "gate_act_fn",
+        "gate_threshold",
+        "gate_temperature",
+        "output_gate_scores",
+        "n_experts",
+        "density_target",
+        "lambda_coef",
+        "eta_coef",
+        "per_expert_aux_loss_coef",
+        "per_token_aux_loss_coef",
+    )
+
+    def _init_routing_free(
+        self,
+        gate_proj_rank=None,
+        gate_norm="l2",
+        gate_bias=True,
+        gate_scale=True,
+        gate_act_fn=None,
+        gate_threshold=0.05,
+        gate_temperature=1.0,
+        output_gate_scores=False,
+        n_experts=12,
+        density_target=0.1,
+        lambda_coef=1e-5,
+        eta_coef=0.2,
+        per_expert_aux_loss_coef=0.5,
+        per_token_aux_loss_coef=0.5,
+    ):
+        self.gate_proj_rank = gate_proj_rank
+        self.gate_norm = gate_norm
+        self.gate_bias = gate_bias
+        self.gate_scale = gate_scale
+        self.gate_act_fn = gate_act_fn
+        self.gate_threshold = gate_threshold
+        self.gate_temperature = gate_temperature
+        self.output_gate_scores = output_gate_scores
+        self.n_experts = n_experts
+        self.density_target = density_target
+        self.lambda_coef = lambda_coef
+        self.eta_coef = eta_coef
+        self.per_expert_aux_loss_coef = per_expert_aux_loss_coef
+        self.per_token_aux_loss_coef = per_token_aux_loss_coef

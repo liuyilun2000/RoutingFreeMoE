@@ -39,6 +39,7 @@ def initialize_model(
     num_attention_heads: int = 32,
     num_key_value_heads: int = 8,
     hidden_size: int = 4096,
+    gate_proj_rank: int = None,
 ):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -63,6 +64,8 @@ def initialize_model(
     
     # Routing Free params
     config.n_experts = n_experts
+    if gate_proj_rank is not None:
+        config.gate_proj_rank = gate_proj_rank
     # We might want to expose other RF params like gate_threshold here if needed, but sticking to command line args requested.
     
     # Ensure num_local_experts matches n_experts for consistency if baseline code checks it (though RF ignores it usually)
@@ -97,6 +100,7 @@ def main():
     
     # Routing Free related (from init.sh)
     parser.add_argument("--n-experts", type=int, required=True, help="Number of experts (n_experts)")
+    parser.add_argument("--gate-proj-rank", type=int, default=None, help="Gate projection rank")
     
     parser.add_argument("--output-dir", type=str, required=True, help="Directory to save the initialized model")
     parser.add_argument("--model-name", type=str, required=True, help="Model name")
@@ -114,6 +118,7 @@ def main():
         model_name=args.model_name,
         tokenizer_model=args.tokenizer_model,
         bf16=args.bf16,
+        gate_proj_rank=args.gate_proj_rank,
     )
 
 if __name__ == "__main__":

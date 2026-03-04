@@ -1,23 +1,27 @@
 #!/bin/bash
-#SBATCH --partition=accelerated
+#SBATCH --partition=accelerated-h100
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
-#SBATCH --time=8:59:00
+#SBATCH --time=24:59:00
 #SBATCH --mail-type=NONE
 
 export WANDB_API_KEY="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"
+export WANDB_LOG_MODEL="false"
+export WANDB_SILENT="true"
 
 source /hkfs/home/project/hk-project-p0022189/hgf_mxv5488/miniconda3/bin/activate py310
 
-num_hidden_layers=12
-num_local_experts=12
-num_experts_per_tok=2
-intermediate_size=128
+num_hidden_layers=32
+num_local_experts=24
+num_experts_per_tok=6
+intermediate_size=256
+LEARNING_RATE=5e-4
 
 config="${num_hidden_layers}L_${intermediate_size}D"
-RUN_NAME="1_mixtral_baseline_${config}x${num_local_experts}E_top${num_experts_per_tok}"
+RUN_NAME="L_1_mixtral_baseline_${config}x${num_local_experts}E_top${num_experts_per_tok}_lr_${LEARNING_RATE}"
 
-MODEL_DIR=${1:-./init_baseline_mixtral/Mixtral_${config}}
+#MODEL_DIR=${1:-./init_baseline_mixtral/Mixtral_${config}}
+MODEL_DIR=${1:-./config/Mixtral_${config}}
 OUTPUT_DIR=${4:-./output_baseline_mixtral/${RUN_NAME}}
 DATASET_NAME=${5:-Skylion007/openwebtext}
 #DATASET_NAME=${5:-roneneldan/TinyStories}
@@ -28,9 +32,9 @@ WORKSPACE_DIR="/hkfs/work/workspace/scratch/hgf_mxv5488-myspace"
 PREPROCESSING_CACHE_DIR=${12:-${WORKSPACE_DIR}/mapped_datasets}
 HF_CACHE_DIR=${13:-${WORKSPACE_DIR}/hf_cache}
 EPOCHS=${6:-1}
-LR=${7:-5e-4}
-BATCH_SIZE=${8:-32}
-GRAD_ACCUM=${9:-2}
+LR=${7:-$LEARNING_RATE}
+BATCH_SIZE=${8:-16}
+GRAD_ACCUM=${9:-4}
 WANDB_PROJECT=${10:-mixtral-baseline}
 WANDB_RUN=${11:-${RUN_NAME}}
 

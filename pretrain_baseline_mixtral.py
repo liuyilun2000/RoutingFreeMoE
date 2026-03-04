@@ -70,7 +70,7 @@ def train(
     warmup_steps: int = 100,
     test_size: float = 0.001,
     eval_steps: int = 200,
-    save_steps: int = 200,
+    save_steps: int = 1000,
     max_length: int = 512,
     # Wandb params
     wandb_project: str = "mixtral-baseline",

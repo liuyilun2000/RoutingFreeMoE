@@ -204,3 +204,7 @@ output_baseline_mixtral
 roneneldan
 
 markdown/
+
+results/
+
+Latex/
