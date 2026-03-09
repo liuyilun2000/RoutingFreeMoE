@@ -2,12 +2,14 @@
 #SBATCH --partition=accelerated-h100
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
-#SBATCH --time=24:59:00
+#SBATCH --time=5:59:00
 #SBATCH --mail-type=NONE
 
 export WANDB_API_KEY="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"
 export WANDB_LOG_MODEL="false"
 export WANDB_SILENT="true"
+export WANDB_RUN_ID="684t48la"
+export WANDB_RESUME="must"
 
 source /hkfs/home/project/hk-project-p0022189/hgf_mxv5488/miniconda3/bin/activate py310
 
@@ -72,4 +74,5 @@ torchrun --nproc_per_node 4 pretrain_baseline_mixtral.py \
   --gradient_accumulation_steps "$GRAD_ACCUM" \
   --wandb-project "$WANDB_PROJECT" \
   --wandb-run "$WANDB_RUN" \
-  --bf16
+  --bf16 \
+  --resume_from_checkpoint ./output_baseline_mixtral/L_1_mixtral_baseline_32L_256Dx24E_top6_lr_5e-4/checkpoint-29000

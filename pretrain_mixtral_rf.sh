@@ -2,13 +2,15 @@
 #SBATCH --partition=accelerated-h100
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
-#SBATCH --time=23:59:00
+#SBATCH --time=24:59:00
 #SBATCH --mail-type=NONE
 
 export WANDB_API_KEY="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"
 #export WANDB_WATCH="false"
 export WANDB_LOG_MODEL="false"
 export WANDB_SILENT="true"
+#export WANDB_RUN_ID="edw0sl27"
+#export WANDB_RESUME="must"
 
 source /hkfs/home/project/hk-project-p0022189/hgf_mxv5488/miniconda3/bin/activate py310
 
@@ -25,7 +27,7 @@ LAMBDA_COEF=1e-10
 ETA_COEF=0.02
 PER_EXPERT_AUX_LOSS_COEF=0.5
 PER_TOKEN_AUX_LOSS_COEF=0.5
-LEARNING_RATE=5e-4
+LEARNING_RATE=1e-3
 GATE_PROJ_RANK=64
 
 config="${num_hidden_layers}L_${intermediate_size}D_rank${GATE_PROJ_RANK}"

@@ -52,3 +52,5 @@ model = AutoModelForCausalLM.from_pretrained(
 watch -n 10 -d squeue
 
 srun --jobid 1234567 --overlap --pty nvidia-smi
+
+  --resume_from_checkpoint ./output/mixtral_rf/L_rf_lr_5e-4_rank_64/checkpoint-14000

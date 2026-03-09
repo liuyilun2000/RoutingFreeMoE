@@ -426,6 +426,202 @@ class RoutingFreeMaskedMoE(nn.Module):
             torch.stack(expert_gate_scores_list, dim=-1) if self.output_gate_scores else None,
         )
 
+class AoEMoE(nn.Module):
+    """
+    Autonomy-of-Experts MoE: each expert self-evaluates via L2 norm of its
+    low-rank projection (gate_proj_A), then top-K experts are selected and
+    their outputs are aggregated with softmax-normalized weights.
+
+    Experts are RoutingFreeFFNWrapper instances (with gate_proj_A, gate_proj_B,
+    up_proj, down_proj, act_fn). No separate router network.
+
+    Returns (output, None) — no aux loss needed.
+    """
+
+    def __init__(self, cfg, experts: list[nn.Module]):
+        super().__init__()
+        self.config = cfg
+        self.experts = nn.ModuleList(experts)
+        self.num_experts_per_tok = getattr(cfg, "num_experts_per_tok", 2)
+
+    def forward(self, hidden_states: torch.Tensor, mask: torch.Tensor | None = None):
+        orig_shape = hidden_states.shape  # [B, T, H]
+        x_flat = hidden_states.view(-1, hidden_states.shape[-1])  # [N, H]
+        N = x_flat.shape[0]
+        E = len(self.experts)
+        R = self.experts[0].gate_proj_rank
+        K = self.num_experts_per_tok
+
+        # Step 1: Batched low-rank self-evaluation — z_i = x @ W_down_r^i
+        W_A = torch.cat([e.gate_proj_A.weight for e in self.experts], dim=0)  # [E*R, H]
+        gate_hidden_all = F.linear(x_flat, W_A).view(N, E, R)  # [N, E, R]
+
+        # Step 1b: L2 norm confidence scores — s_i = ||z_i||_2
+        scores = torch.norm(gate_hidden_all, p=2, dim=-1)  # [N, E]
+
+        # Step 2: Top-K expert selection
+        topk_scores, topk_indices = torch.topk(scores, K, dim=-1)  # [N, K]
+
+        # Step 3: Softmax normalization over selected experts
+        topk_weights = F.softmax(topk_scores, dim=-1)  # [N, K]
+
+        # Step 4: Weighted expert execution using cached z_j
+        out_flat = torch.zeros_like(x_flat)
+        for e, expert in enumerate(self.experts):
+            # Find tokens that selected this expert and their weights
+            expert_mask = (topk_indices == e)  # [N, K] boolean
+            token_mask = expert_mask.any(dim=-1)  # [N] boolean
+
+            if not token_mask.any():
+                continue
+
+            # Weight for this expert per token (sum across K slots, though typically appears once)
+            weight_for_expert = (topk_weights * expert_mask.float()).sum(dim=-1)  # [N]
+
+            x_selected = x_flat[token_mask]
+            gate_hidden_selected = gate_hidden_all[token_mask, e, :]  # cached z_j
+            w_selected = weight_for_expert[token_mask]
+
+            # Full SwiGLU forward using cached z_j:
+            # g_j = SiLU(z_j @ W_up_r^j), E_j(x) = (g_j ⊙ (x @ W_up_std^j)) @ W_down_std^j
+            expert_out = expert.down_proj(
+                expert.act_fn(expert.gate_proj_B(gate_hidden_selected)) * expert.up_proj(x_selected)
+            )
+            out_flat[token_mask] = out_flat[token_mask] + (expert_out * w_selected.unsqueeze(1)).to(dtype=x_flat.dtype)
+
+        out = out_flat.view(orig_shape)
+        return out, None
+
+
+class ReMoERouter(nn.Module):
+    """
+    ReMoE router: shared linear projection → ReLU.
+    Returns non-negative routing weights per expert.
+    """
+
+    def __init__(self, hidden_size: int, num_experts: int):
+        super().__init__()
+        self.linear = nn.Linear(hidden_size, num_experts, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, T, H] or [N, H]
+        Returns:
+            weights: same leading dims + [num_experts], non-negative (ReLU)
+        """
+        return F.relu(self.linear(x))
+
+
+class ReMoEMoE(nn.Module):
+    """
+    ReMoE MoE (w/o softmax): ReLU-weighted expert aggregation.
+    Skips zero-weight experts per token for efficiency.
+    Returns (output, router_weights) where router_weights: [B, T, E].
+    """
+
+    def __init__(self, hidden_size: int, experts: list[nn.Module]):
+        super().__init__()
+        self.experts = nn.ModuleList(experts)
+        self.router = ReMoERouter(hidden_size, len(experts))
+
+    def forward(self, hidden_states: torch.Tensor, mask: torch.Tensor | None = None):
+        orig_shape = hidden_states.shape  # [B, T, H]
+        x_flat = hidden_states.view(-1, orig_shape[-1])  # [N, H]
+
+        weights = self.router(x_flat)  # [N, E]
+        out_flat = torch.zeros_like(x_flat)
+
+        for e, expert in enumerate(self.experts):
+            w_e = weights[:, e]  # [N]
+            active = w_e > 0
+            if active.any():
+                x_active = x_flat[active]
+                expert_out = expert.down_proj(expert.act_fn(expert.gate_proj(x_active)) * expert.up_proj(x_active))
+                out_flat[active] = out_flat[active] + expert_out * w_e[active].unsqueeze(1)
+
+        out = out_flat.view(orig_shape)
+        router_weights = weights.view(orig_shape[:-1] + (len(self.experts),))
+        return out, router_weights
+
+
+class ReMoEAuxLossMixin:
+    """L1 regularization on ReLU router outputs with adaptive λ coefficient."""
+
+    def sync_remoe_lambda(self):
+        import torch.distributed as dist
+        if dist.is_initialized():
+            dist.all_reduce(self.l1_coef_adaptive, op=dist.ReduceOp.AVG)
+
+    def compute_remoe_aux(self, router_weights_list, cfg, training):
+        """
+        Args:
+            router_weights_list: list of [B, T, E] tensors (one per layer)
+            cfg: config with l1_coef, density_target, eta_coef
+            training: bool, whether to update adaptive lambda
+        Returns:
+            aux_loss: scalar tensor
+            aux_dict: dict for logging
+        """
+        l1_coef = getattr(self, "l1_coef_adaptive", None)
+        if l1_coef is None:
+            l1_coef = torch.tensor(getattr(cfg, "l1_coef", 0.01))
+
+        if not router_weights_list:
+            return None, None, l1_coef
+
+        all_weights = []
+        for w in router_weights_list:
+            if w is not None:
+                all_weights.append(w)
+
+        if not all_weights:
+            return None, None, l1_coef
+
+        cat_weights = torch.cat([w.view(-1) for w in all_weights])
+        l1_loss = cat_weights.sum()
+
+        # Ensure lambda and weights are on the same device/dtype
+        l1_coef = l1_coef.to(device=cat_weights.device, dtype=cat_weights.dtype)
+        aux_loss = l1_coef * l1_loss
+
+        # density = fraction of active experts (non-zero weights)
+        density = (cat_weights > 0).float().mean()
+        density_target = getattr(cfg, "density_target", 0.25)
+        density_ratio = density / density_target
+
+        # Adaptive lambda update: same pattern as RF
+        new_l1_coef = l1_coef
+        if training:
+            eta_coef = getattr(cfg, "eta_coef", 0.02)
+            update_factor = (1 + eta_coef) ** torch.sign(density - density_target)
+            new_l1_coef = l1_coef * update_factor
+            new_l1_coef = torch.clamp(new_l1_coef, max=1.0)
+            if hasattr(self, "l1_coef_adaptive"):
+                self.l1_coef_adaptive = new_l1_coef
+                self.sync_remoe_lambda()
+
+        aux_dict = {
+            "aux_loss": aux_loss.item(),
+            "l1_loss": l1_loss.item(),
+            "l1_coef": float(new_l1_coef.detach().cpu()) if isinstance(new_l1_coef, torch.Tensor) else new_l1_coef,
+            "density": density.item(),
+            "density_ratio": density_ratio.item(),
+        }
+        return aux_loss, aux_dict, new_l1_coef
+
+
+class ReMoEConfigMixin:
+    """ReMoE config fields mixin."""
+
+    remoe_fields = ("l1_coef", "density_target", "eta_coef")
+
+    def _init_remoe(self, l1_coef=0.01, density_target=0.25, eta_coef=0.02):
+        self.l1_coef = l1_coef
+        self.density_target = density_target
+        self.eta_coef = eta_coef
+
+
 class RoutingFreeConfigMixin:
     """Routing-free fields mixin, reusable for other MoE configs."""
 

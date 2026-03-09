@@ -1,1 +1,3 @@
 from .deepseek_v3_rf import RoutingFreeDeepseekV3Model, RoutingFreeDeepseekV3ForCausalLM
+from .mixtral_aoe import AoEMixtralConfig, AoEMixtralModel, AoEMixtralForCausalLM
+from .mixtral_remoe import ReMoEMixtralConfig, ReMoEMixtralModel, ReMoEMixtralForCausalLM
