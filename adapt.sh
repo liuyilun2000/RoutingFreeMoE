@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
 # adapt.sh
-# Calibrate gate biases of the converted OLMoE-RFMoE checkpoint using the
-# density auxiliary loss on a 1/10000 slice of OpenWebText.
+# Calibrate gate biases of the converted RFMoE checkpoint using the density
+# auxiliary loss on a 1/10000 slice of OpenWebText.
 #
 # Only gate.gate_bias parameters are trained (one scalar per expert per layer).
 # All FFN / attention weights remain frozen.
@@ -10,31 +10,31 @@
 # Key choices:
 #   --gate-threshold   1.0     must match conversion
 #   --density-target   0.25    drive each expert to activate 25% of tokens
-#   --quantization     int4    load frozen weights in NF4 (saves ~70% VRAM)
+#   --bf16                     use HF-native bf16 precision
 #   --per-device-batch-size       2  \
-#   --gradient-accumulation-steps 32  → effective batch = 2×32×N_GPUs per step
+#   --gradient-accumulation-steps 8   → effective batch = 2×8 = 16 per GPU
 #
-# Output: OLMoE-1B-7B-Instruct-RFMoE-adapted/  (next to this script)
+# Output: Mixtral-8x7B-Instruct-v0.1-RFMoE-adapted/
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-MODEL_DIR="${SCRIPT_DIR}/OLMoE-1B-7B-Instruct-RFMoE-converted"
-OUTPUT_DIR="${SCRIPT_DIR}/OLMoE-1B-7B-Instruct-RFMoE-adapted"
+MODEL_DIR="${SCRIPT_DIR}/Mixtral-8x7B-Instruct-v0.1-RFMoE-converted"
+OUTPUT_DIR="${SCRIPT_DIR}/Mixtral-8x7B-Instruct-v0.1-RFMoE-adapted"
 
 # ── Multi-GPU detection ──────────────────────────────────────────────────────
+# Use torchrun when multiple GPUs are available, plain python otherwise.
 N_GPUS=$(python -c "import torch; print(torch.cuda.device_count())" 2>/dev/null || echo 0)
 
 echo "================================================================"
-echo "  OLMoE-RFMoE gate-bias adaptation"
+echo "  RFMoE gate-bias adaptation"
 echo "  model   : ${MODEL_DIR}"
 echo "  output  : ${OUTPUT_DIR}"
 echo "  GPUs    : ${N_GPUS}"
-echo "  target density : 0.25  |  threshold : 1.0"
-echo "  quant   : int4 (frozen weights only; gate_bias stays float)"
-echo "  eff. batch / GPU : 2 × 32 = 64 tokens"
+echo "  target density : 0.25"
+echo "  dtype   : bfloat16 (HF-native)"
 echo "================================================================"
 
 ADAPT_ARGS=(
@@ -64,7 +64,6 @@ ADAPT_ARGS=(
 
     # Precision & memory
     --bf16
-    --quantization  int4
 
     --n-workers  4
     --seed       42
@@ -72,10 +71,10 @@ ADAPT_ARGS=(
 
 if [ "${N_GPUS}" -gt 1 ]; then
     echo "Launching with torchrun (${N_GPUS} GPUs, DDP) …"
-    torchrun --nproc_per_node="${N_GPUS}" adapt_olmoe_gate_bias.py "${ADAPT_ARGS[@]}"
+    torchrun --nproc_per_node="${N_GPUS}" adapt_gate_bias.py "${ADAPT_ARGS[@]}"
 else
     echo "Launching single-process (device_map=auto) …"
-    python adapt_olmoe_gate_bias.py "${ADAPT_ARGS[@]}"
+    python adapt_gate_bias.py "${ADAPT_ARGS[@]}"
 fi
 
 echo ""

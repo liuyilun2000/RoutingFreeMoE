@@ -7,8 +7,7 @@
 #   --gate-proj-rank 128     low-rank gate projection (SVD of gate_proj / w_gate)
 #   --gate-threshold 1.0     initial threshold (calibrated by adapt.sh)
 #   --density-target 0.25    stored in config, enforced by adapt.sh aux loss
-#   --quantization int4      load source model in NF4 to reduce VRAM usage
-#   --dtype bfloat16         save converted checkpoint in bf16
+#   --dtype bfloat16         load & save in HF-native bf16
 #
 # Output: OLMoE-1B-7B-Instruct-RFMoE-converted/  (next to this script)
 # -----------------------------------------------------------------------------
@@ -24,7 +23,7 @@ echo "  allenai/OLMoE-1B-7B-0125-Instruct → RFMoE conversion"
 echo "  output   : ${OUTPUT_DIR}"
 echo "  rank     : 128"
 echo "  threshold: 1.0  (gate biases calibrated by adapt.sh)"
-echo "  quant    : int4 (NF4 double-quant)"
+echo "  dtype    : bfloat16 (HF-native)"
 echo "================================================================"
 
 python convert_olmoe_to_rfmoe.py \
@@ -39,8 +38,7 @@ python convert_olmoe_to_rfmoe.py \
     --eta-coef        0.02                                 \
     --per-expert-aux-loss-coef 0.5                         \
     --per-token-aux-loss-coef  0.5                         \
-    --dtype           bfloat16                             \
-    --quantization    int4
+    --dtype           bfloat16
 
 echo ""
 echo "Conversion done → ${OUTPUT_DIR}"
