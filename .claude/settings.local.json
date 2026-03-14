@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod +x C:/Users/Administrator/Desktop/RFMoE/RoutingFreeMoE/convert.sh C:/Users/Administrator/Desktop/RFMoE/RoutingFreeMoE/adapt.sh)"
+    ]
+  }
+}
