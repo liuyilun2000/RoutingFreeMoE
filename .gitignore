@@ -44,7 +44,6 @@ hf_cache/
 *.png
 *.md
 !README.md
-CLAUDE.md
 workspace_config.py
 results/
 Latex/
