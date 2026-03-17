@@ -1,0 +1,53 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# Model weights and checkpoints
+*.safetensors
+*.pt
+*.bin
+checkpoints/
+output*/
+
+# Logs
+*.log
+*.out
+*.err
+wandb/
+
+# Data
+roneneldan/
+mapped_datasets/
+hf_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+*.png
+*.md
+!README.md
+CLAUDE.md
+workspace_config.py
+results/
+Latex/
+markdown/
+figures/
+gate_scores/
