@@ -165,6 +165,7 @@ class RoutingFreeMixtralDecoderLayer(MixtralDecoderLayer):
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
         output_router_logits: bool | None = False,
+        output_gate_scores: bool | None = None,
         use_cache: bool | None = False,
         cache_position: torch.LongTensor | None = None,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None, 
@@ -186,7 +187,7 @@ class RoutingFreeMixtralDecoderLayer(MixtralDecoderLayer):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         
-        mlp_out = self.block_sparse_moe(hidden_states)
+        mlp_out = self.block_sparse_moe(hidden_states, output_gate_scores=output_gate_scores)
         
         gate_score = None
         if isinstance(mlp_out, tuple) and len(mlp_out) == 2:
@@ -222,7 +223,7 @@ class RoutingFreeMixtralModel(MixtralModel):
         use_cache: bool | None = None,
         output_router_logits: bool | None = None, # kept for signature compat, but we use output_gate_scores in RF logic usually
         cache_position: torch.LongTensor | None = None,
-        output_gate_scores: bool = True, # Explicit RF arg
+        output_gate_scores: bool = False, # Explicit RF arg
         **kwargs,
     ) -> MoeModelOutputWithPast:
         
@@ -280,6 +281,7 @@ class RoutingFreeMixtralModel(MixtralModel):
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
+                output_gate_scores=output_gate_scores,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,

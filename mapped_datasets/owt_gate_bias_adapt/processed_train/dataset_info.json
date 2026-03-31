@@ -1,0 +1,453 @@
+{
+  "builder_name": "parquet",
+  "citation": "",
+  "config_name": "plain_text",
+  "dataset_name": "openwebtext",
+  "dataset_size": 39769491688,
+  "description": "",
+  "download_checksums": {
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00000-of-00080.parquet": {
+      "num_bytes": 302848326,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00001-of-00080.parquet": {
+      "num_bytes": 305678548,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00002-of-00080.parquet": {
+      "num_bytes": 304419240,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00003-of-00080.parquet": {
+      "num_bytes": 304332042,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00004-of-00080.parquet": {
+      "num_bytes": 301175397,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00005-of-00080.parquet": {
+      "num_bytes": 301755705,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00006-of-00080.parquet": {
+      "num_bytes": 303536715,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00007-of-00080.parquet": {
+      "num_bytes": 300180244,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00008-of-00080.parquet": {
+      "num_bytes": 302694767,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00009-of-00080.parquet": {
+      "num_bytes": 302691677,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00010-of-00080.parquet": {
+      "num_bytes": 302204895,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00011-of-00080.parquet": {
+      "num_bytes": 302975845,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00012-of-00080.parquet": {
+      "num_bytes": 302244422,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00013-of-00080.parquet": {
+      "num_bytes": 302055257,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00014-of-00080.parquet": {
+      "num_bytes": 304001822,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00015-of-00080.parquet": {
+      "num_bytes": 303473398,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00016-of-00080.parquet": {
+      "num_bytes": 304131969,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00017-of-00080.parquet": {
+      "num_bytes": 301375243,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00018-of-00080.parquet": {
+      "num_bytes": 301508378,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00019-of-00080.parquet": {
+      "num_bytes": 301406222,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00020-of-00080.parquet": {
+      "num_bytes": 303965188,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00021-of-00080.parquet": {
+      "num_bytes": 303492063,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00022-of-00080.parquet": {
+      "num_bytes": 304784301,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00023-of-00080.parquet": {
+      "num_bytes": 305250514,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00024-of-00080.parquet": {
+      "num_bytes": 300473667,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00025-of-00080.parquet": {
+      "num_bytes": 303497159,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00026-of-00080.parquet": {
+      "num_bytes": 300841872,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00027-of-00080.parquet": {
+      "num_bytes": 301179312,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00028-of-00080.parquet": {
+      "num_bytes": 302216916,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00029-of-00080.parquet": {
+      "num_bytes": 302599929,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00030-of-00080.parquet": {
+      "num_bytes": 299345408,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00031-of-00080.parquet": {
+      "num_bytes": 302655351,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00032-of-00080.parquet": {
+      "num_bytes": 303272946,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00033-of-00080.parquet": {
+      "num_bytes": 301539738,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00034-of-00080.parquet": {
+      "num_bytes": 302560727,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00035-of-00080.parquet": {
+      "num_bytes": 301341568,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00036-of-00080.parquet": {
+      "num_bytes": 303206782,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00037-of-00080.parquet": {
+      "num_bytes": 302424854,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00038-of-00080.parquet": {
+      "num_bytes": 302372305,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00039-of-00080.parquet": {
+      "num_bytes": 301636847,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00040-of-00080.parquet": {
+      "num_bytes": 303737749,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00041-of-00080.parquet": {
+      "num_bytes": 304266038,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00042-of-00080.parquet": {
+      "num_bytes": 302040879,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00043-of-00080.parquet": {
+      "num_bytes": 305323537,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00044-of-00080.parquet": {
+      "num_bytes": 301885118,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00045-of-00080.parquet": {
+      "num_bytes": 303334655,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00046-of-00080.parquet": {
+      "num_bytes": 302169880,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00047-of-00080.parquet": {
+      "num_bytes": 302501111,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00048-of-00080.parquet": {
+      "num_bytes": 302652427,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00049-of-00080.parquet": {
+      "num_bytes": 301871994,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00050-of-00080.parquet": {
+      "num_bytes": 303349696,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00051-of-00080.parquet": {
+      "num_bytes": 305031989,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00052-of-00080.parquet": {
+      "num_bytes": 303050982,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00053-of-00080.parquet": {
+      "num_bytes": 300684516,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00054-of-00080.parquet": {
+      "num_bytes": 303631897,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00055-of-00080.parquet": {
+      "num_bytes": 302735425,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00056-of-00080.parquet": {
+      "num_bytes": 303083314,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00057-of-00080.parquet": {
+      "num_bytes": 300544465,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00058-of-00080.parquet": {
+      "num_bytes": 303089061,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00059-of-00080.parquet": {
+      "num_bytes": 301706009,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00060-of-00080.parquet": {
+      "num_bytes": 301068661,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00061-of-00080.parquet": {
+      "num_bytes": 302642138,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00062-of-00080.parquet": {
+      "num_bytes": 301151001,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00063-of-00080.parquet": {
+      "num_bytes": 300798197,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00064-of-00080.parquet": {
+      "num_bytes": 303348229,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00065-of-00080.parquet": {
+      "num_bytes": 301745696,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00066-of-00080.parquet": {
+      "num_bytes": 299821953,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00067-of-00080.parquet": {
+      "num_bytes": 301605059,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00068-of-00080.parquet": {
+      "num_bytes": 303100801,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00069-of-00080.parquet": {
+      "num_bytes": 301381334,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00070-of-00080.parquet": {
+      "num_bytes": 300170424,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00071-of-00080.parquet": {
+      "num_bytes": 301359176,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00072-of-00080.parquet": {
+      "num_bytes": 301922808,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00073-of-00080.parquet": {
+      "num_bytes": 300555941,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00074-of-00080.parquet": {
+      "num_bytes": 300259549,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00075-of-00080.parquet": {
+      "num_bytes": 302686876,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00076-of-00080.parquet": {
+      "num_bytes": 302646710,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00077-of-00080.parquet": {
+      "num_bytes": 303181602,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00078-of-00080.parquet": {
+      "num_bytes": 300854488,
+      "checksum": null
+    },
+    "hf://datasets/Skylion007/openwebtext@b4325f019c648b1641a1784748667e8b74e5e064/plain_text/train-00079-of-00080.parquet": {
+      "num_bytes": 302753464,
+      "checksum": null
+    }
+  },
+  "download_size": 24193092408,
+  "features": {
+    "input_ids": {
+      "feature": {
+        "dtype": "int32",
+        "_type": "Value"
+      },
+      "_type": "List"
+    },
+    "attention_mask": {
+      "feature": {
+        "dtype": "int8",
+        "_type": "Value"
+      },
+      "_type": "List"
+    },
+    "labels": {
+      "feature": {
+        "dtype": "int64",
+        "_type": "Value"
+      },
+      "_type": "List"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 63962584096,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 39769491688,
+      "num_examples": 8013769,
+      "shard_lengths": [
+        101173,
+        100173,
+        99173,
+        100173,
+        102173,
+        98173,
+        101173,
+        102173,
+        97173,
+        101172,
+        101172,
+        98172,
+        101172,
+        101172,
+        98172,
+        101172,
+        101172,
+        98172,
+        101172,
+        101172,
+        98172,
+        101172,
+        100172,
+        99172,
+        102172,
+        101172,
+        97172,
+        101172,
+        101172,
+        98172,
+        102172,
+        101172,
+        97172,
+        102172,
+        101172,
+        97172,
+        101172,
+        101172,
+        98172,
+        101172,
+        101172,
+        98172,
+        101172,
+        100172,
+        99172,
+        101172,
+        101172,
+        98172,
+        101172,
+        99172,
+        101172,
+        99172,
+        101172,
+        99172,
+        101172,
+        99172,
+        101172,
+        99172,
+        101172,
+        99172,
+        102172,
+        98172,
+        101172,
+        99172,
+        101172,
+        99172,
+        102172,
+        98172,
+        101172,
+        99172,
+        102172,
+        98172,
+        101172,
+        99172,
+        102172,
+        98172,
+        101172,
+        99172,
+        102172,
+        98172
+      ],
+      "dataset_name": "openwebtext"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

@@ -98,6 +98,7 @@ class RoutingFreeOlmoeDecoderLayer(OlmoeDecoderLayer):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
+        output_gate_scores: bool | None = None,
         use_cache: bool | None = False,
         cache_position: torch.LongTensor | None = None,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
@@ -105,6 +106,10 @@ class RoutingFreeOlmoeDecoderLayer(OlmoeDecoderLayer):
     ):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
+
+        # OlmoeSdpaAttention.forward() does not accept return_dict; strip it so
+        # generation/caller can pass return_dict=True without breaking the layer.
+        attn_kwargs = {k: v for k, v in kwargs.items() if k != "return_dict"}
 
         # Use [0] to safely extract hidden_states regardless of how many values
         # OlmoeAttention returns (varies by transformers version / Flash-Attn).
@@ -116,14 +121,14 @@ class RoutingFreeOlmoeDecoderLayer(OlmoeDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
-            **kwargs,
+            **attn_kwargs,
         )[0]
         hidden_states = residual + hidden_states
 
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
 
-        mlp_out = self.mlp(hidden_states)
+        mlp_out = self.mlp(hidden_states, output_gate_scores=output_gate_scores)
         gate_score = None
         if isinstance(mlp_out, tuple) and len(mlp_out) == 2:
             hidden_states, gate_score = mlp_out
@@ -159,7 +164,7 @@ class RoutingFreeOlmoeModel(OlmoeModel):
         use_cache: bool | None = None,
         output_router_logits: bool | None = None,   # kept for API compat
         cache_position: torch.LongTensor | None = None,
-        output_gate_scores: bool = True,             # RF-specific flag
+        output_gate_scores: bool = False,             # RF-specific flag
         **kwargs,
     ) -> MoeModelOutputWithPast:
 
@@ -204,6 +209,7 @@ class RoutingFreeOlmoeModel(OlmoeModel):
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
+                output_gate_scores=output_gate_scores,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,

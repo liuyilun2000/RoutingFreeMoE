@@ -51,7 +51,12 @@ class RoutingFreeGate(nn.Module):
             return lambda x: torch.norm(x, p=float("inf"), dim=-1)
         return lambda x: torch.norm(x, p=2, dim=-1)  # default to l2
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None):
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        output_gate_scores: bool | None = None,
+    ):
         """
         Args:
             x: [B, T, H] as Batch_size, seq_len, Hidden_size, or [N, H] as Number of valid tokens, Hidden_size
@@ -97,8 +102,9 @@ class RoutingFreeGate(nn.Module):
         gate_mask_full[idx[gate_mask]] = True
         gate_mask_full = gate_mask_full.view(orig_shape[:-1])
 
+        emit_gate_scores = self.output_gate_scores if output_gate_scores is None else output_gate_scores
         gate_score_full = None
-        if self.output_gate_scores:
+        if emit_gate_scores:
             gate_score_full = x_flat.new_ones(x_flat.shape[0]) * -float("inf")
             if gate_mask.any():
                 # ensure dtype aligns with destination
@@ -143,13 +149,21 @@ class RoutingFreeFFNWrapper(nn.Module):
 
         self.output_gate_scores = getattr(cfg, "output_gate_scores", True)
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None):
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        output_gate_scores: bool | None = None,
+    ):
         """
         Returns:
             out: Same shape as x
             gate_score_full (or None): Same shape as x[...,0]
         """
-        gate_mask_full, gate_score_full, gate_hidden = self.gate(x, mask)
+        emit_gate_scores = self.output_gate_scores if output_gate_scores is None else output_gate_scores
+        gate_mask_full, gate_score_full, gate_hidden = self.gate(
+            x, mask, output_gate_scores=emit_gate_scores
+        )
         gate_mask_flat = gate_mask_full.view(-1)
 
         orig_shape = x.shape
@@ -167,7 +181,7 @@ class RoutingFreeFFNWrapper(nn.Module):
 
         mlp_out = mlp_out_flat.view(orig_shape)
         # gate_score_full is already correctly shaped and filled by RoutingFreeGate — no rebuild needed.
-        return mlp_out, gate_score_full if self.output_gate_scores else None
+        return mlp_out, gate_score_full if emit_gate_scores else None
         
     def forward_ffn(
         self,
@@ -377,7 +391,12 @@ class RoutingFreeMaskedMoE(nn.Module):
         self.shared_expert = shared_expert
         self.output_gate_scores = getattr(cfg, "output_gate_scores", True)
 
-    def forward(self, hidden_states: torch.Tensor, mask: torch.Tensor | None = None):
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        output_gate_scores: bool | None = None,
+    ):
         orig_shape = hidden_states.shape
         x_flat = hidden_states.view(-1, hidden_states.shape[-1])  # [N, H]
         N = x_flat.shape[0]
@@ -395,7 +414,8 @@ class RoutingFreeMaskedMoE(nn.Module):
         gate_scores_all = self.experts[0].gate._gate_norm(gate_hidden_all)
 
         out_flat = torch.zeros_like(x_flat)
-        expert_gate_scores_list = [] if self.output_gate_scores else None
+        emit_gate_scores = self.output_gate_scores if output_gate_scores is None else output_gate_scores
+        expert_gate_scores_list = [] if emit_gate_scores else None
 
         for e, expert in enumerate(self.experts):
             gate_hidden_e = gate_hidden_all[:, e, :].contiguous()  # [N, R]
@@ -414,7 +434,7 @@ class RoutingFreeMaskedMoE(nn.Module):
                 x_flat, gate_hidden_e, gate_score_e, gate_mask_e
             )
 
-            if self.output_gate_scores:
+            if emit_gate_scores:
                 score_full = gate_score_e.new_full((N,), -float('inf'))
                 if gate_mask_e.any():
                     score_full[gate_mask_e] = gate_score_e[gate_mask_e]
@@ -423,7 +443,7 @@ class RoutingFreeMaskedMoE(nn.Module):
         out = out_flat.view(orig_shape)
         return (
             out,
-            torch.stack(expert_gate_scores_list, dim=-1) if self.output_gate_scores else None,
+            torch.stack(expert_gate_scores_list, dim=-1) if emit_gate_scores else None,
         )
 
 class AoEMoE(nn.Module):

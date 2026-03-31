@@ -92,19 +92,27 @@ def _is_router_key(key: str) -> bool:
 # SVD-init and reconstruction check
 # ---------------------------------------------------------------------------
 
-def _report_svd_reconstruction(new_sd: dict, rank: int):
-    key_w = "model.layers.0.mlp.experts.0.gate_proj.weight"
-    key_a = "model.layers.0.mlp.experts.0.gate_proj_A.weight"
-    key_b = "model.layers.0.mlp.experts.0.gate_proj_B.weight"
-    if not all(k in new_sd for k in (key_w, key_a, key_b)):
+def _report_svd_truncation_precision(
+    rel_errors: list,
+    variance_explained: list,
+    rank: int,
+    num_experts: int,
+    sample_layer: int = 0,
+    sample_expert: int = 0,
+):
+    """
+    Print summary of SVD truncation precision: distance between original W
+    and reconstructed W_recon = B @ A (i.e. USV with top-rank only).
+    """
+    if not rel_errors:
         return
-    W   = new_sd[key_w].float()
-    A   = new_sd[key_a].float()
-    B   = new_sd[key_b].float()
-    err = (W - B @ A).norm() / W.norm()
-    print(f"    Reconstruction check (layer 0 / expert 0, rank={rank}):")
-    print(f"      ||W - B@A|| / ||W||  = {err:.6f}")
-    print(f"      Variance explained   ≈ {(1 - err**2)*100:.2f}%")
+    rel = torch.tensor(rel_errors, dtype=torch.float32)
+    var = torch.tensor(variance_explained, dtype=torch.float32)
+    print(f"    SVD truncation precision (rank={rank}, {len(rel_errors)} experts):")
+    print(f"      Relative error  ||W - B@A|| / ||W||   min={rel.min():.6f}  mean={rel.mean():.6f}  max={rel.max():.6f}")
+    print(f"      Variance explained (1 - rel_err²)     min={var.min():.2f}%  mean={var.mean():.2f}%  max={var.max():.2f}%")
+    idx = min(sample_layer * num_experts + sample_expert, len(rel_errors) - 1)
+    print(f"      Example (layer {sample_layer} expert {sample_expert}): rel_err={rel[idx]:.6f}, var_explained={var[idx]:.2f}%")
 
 
 def _svd_init_gate_proj(
@@ -121,9 +129,13 @@ def _svd_init_gate_proj(
     W = U S Vᵀ   (W shape: [intermediate, hidden])
       gate_proj_A = diag(S[:r]^0.5) @ Vh[:r, :]   [rank, hidden]
       gate_proj_B = U[:, :r] @ diag(S[:r]^0.5)    [intermediate, rank]
+
+    Returns (rel_errors, variance_explained) for reporting truncation precision.
     """
     total = num_layers * num_experts
     done  = 0
+    rel_errors = []
+    variance_explained = []
     for li in range(num_layers):
         for ei in range(num_experts):
             pfx   = f"model.layers.{li}.mlp.experts.{ei}"
@@ -139,12 +151,24 @@ def _svd_init_gate_proj(
             r     = min(rank, S.shape[0])
             S_sqrt = S[:r].sqrt()
 
-            new_sd[a_key] = (S_sqrt.unsqueeze(1) * Vh[:r, :]).to(dtype)   # [r, hidden]
-            new_sd[b_key] = (U[:, :r] * S_sqrt.unsqueeze(0)).to(dtype)    # [intermediate, r]
+            A = (S_sqrt.unsqueeze(1) * Vh[:r, :]).to(dtype)   # [r, hidden]
+            B = (U[:, :r] * S_sqrt.unsqueeze(0)).to(dtype)    # [intermediate, r]
+            new_sd[a_key] = A
+            new_sd[b_key] = B
+
+            # Truncation precision: distance between original W and reconstructed B@A
+            W_recon = B.float() @ A.float()
+            err_fro = (W - W_recon).norm(p="fro")
+            w_fro = W.norm(p="fro")
+            rel_err = (err_fro / w_fro).item() if w_fro > 0 else 0.0
+            var_exp = (1.0 - rel_err * rel_err) * 100.0  # variance explained %
+            rel_errors.append(rel_err)
+            variance_explained.append(var_exp)
 
             done += 1
             print(f"\r    SVD progress: {done}/{total} experts", end="", flush=True)
     print()
+    return rel_errors, variance_explained
 
 
 def _init_gate_scale_bias(
@@ -365,8 +389,13 @@ def convert_olmoe_to_rfmoe(
     # 5. SVD-initialise gate_proj_A / gate_proj_B
     # ------------------------------------------------------------------
     print(f"[5/6] SVD-initialising gate_proj_A / gate_proj_B (rank={resolved_rank}) …")
-    _svd_init_gate_proj(new_sd, num_layers, num_experts, resolved_rank, torch_dtype)
-    _report_svd_reconstruction(new_sd, rank=resolved_rank)
+    rel_errors, variance_explained = _svd_init_gate_proj(
+        new_sd, num_layers, num_experts, resolved_rank, torch_dtype
+    )
+    _report_svd_truncation_precision(
+        rel_errors, variance_explained, rank=resolved_rank,
+        num_experts=num_experts, sample_layer=0, sample_expert=0,
+    )
 
     _init_gate_scale_bias(new_sd, num_layers, num_experts, torch_dtype, gate_bias_init=-1e-6)
     print("    gate_scale=1.0 and gate_bias=-1e-6 set for all experts.")

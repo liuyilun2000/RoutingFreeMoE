@@ -24,7 +24,7 @@ Usage
       --density-target   0.25 \\
       --lambda-coef      1e-5 \\
       --learning-rate    1e-2 \\
-      --dataset-fraction 1e-4
+      --dataset-fraction 1e-3
 
   # Multi-GPU with torchrun:
   torchrun --nproc_per_node=4 adapt_gate_bias.py \\
@@ -50,18 +50,18 @@ from transformers import (
     DataCollatorForLanguageModeling,
 )
 
-from routing_free.mixtral_rf import (
-    RoutingFreeMixtralConfig,
-    RoutingFreeMixtralForCausalLM,
-    RoutingFreeMixtralModel,
+from routing_free.olmoe_rf import (
+    RoutingFreeOlmoeConfig,
+    RoutingFreeOlmoeForCausalLM,
+    RoutingFreeOlmoeModel,
 )
 from train_utils import preprocess_function_factory, preprocess_and_cache_dataset, AuxLossTrainer
 from workspace_config import PREPROCESSING_CACHE_DIR
 
 # Register custom classes so AutoModel can load the checkpoint
-AutoConfig.register("routing_free_mixtral", RoutingFreeMixtralConfig)
-AutoModel.register(RoutingFreeMixtralConfig, RoutingFreeMixtralModel)
-AutoModelForCausalLM.register(RoutingFreeMixtralConfig, RoutingFreeMixtralForCausalLM)
+AutoConfig.register("routing_free_olmoe", RoutingFreeOlmoeConfig)
+AutoModel.register(RoutingFreeOlmoeConfig, RoutingFreeOlmoeModel)
+AutoModelForCausalLM.register(RoutingFreeOlmoeConfig, RoutingFreeOlmoeForCausalLM)
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ def adapt(
     model_dir: str,
     output_dir: str,
     # Dataset
-    dataset_fraction: float = 1e-4,    # 1/10000 of OWT train split
+    dataset_fraction: float = 1e-3,    # 1/10000 of OWT train split
     max_length: int = 512,
     # RF aux-loss params (should match the values used during conversion)
     gate_temperature: float = 1.0,
@@ -172,7 +172,7 @@ def adapt(
         print(f"  GPUs visible : {n_gpus}  |  in torchrun : {in_torchrun}  "
               f"|  device_map : {device_map!r}  |  quantization : {quantization}")
 
-    config = RoutingFreeMixtralConfig.from_pretrained(model_dir)
+    config = RoutingFreeOlmoeConfig.from_pretrained(model_dir)
     config.output_gate_scores       = True  # required for aux loss
     config.gate_temperature         = gate_temperature
     config.gate_threshold           = gate_threshold
@@ -186,15 +186,14 @@ def adapt(
 
     load_kwargs = dict(config=config)
     if bnb_config is not None:
-        # Quantized load: bitsandbytes handles placement; must pass device_map
         load_kwargs["quantization_config"] = bnb_config
         load_kwargs["device_map"] = device_map or "auto"
     else:
-        load_kwargs["torch_dtype"] = compute_dtype
+        load_kwargs["dtype"] = compute_dtype
         if device_map is not None:
             load_kwargs["device_map"] = device_map
 
-    model = RoutingFreeMixtralForCausalLM.from_pretrained(model_dir, **load_kwargs)
+    model = RoutingFreeOlmoeForCausalLM.from_pretrained(model_dir, **load_kwargs)
 
     # ── Freeze everything except gate.gate_bias ────────────────────────────
     n_trainable = 0
@@ -356,7 +355,7 @@ def main():
                         help="Directory to write training checkpoints and final model")
 
     # Dataset
-    parser.add_argument("--dataset-fraction", type=float, default=1e-4,
+    parser.add_argument("--dataset-fraction", type=float, default=1e-3,
                         help="Fraction of the OWT train split to use (default: 1/10000)")
     parser.add_argument("--max-length", type=int, default=512,
                         help="Tokenisation max length")
@@ -393,8 +392,8 @@ def main():
     parser.add_argument("--seed",          type=int, default=42)
 
     # Logging
-    parser.add_argument("--wandb-project",  default=None,
-                        help="W&B project name (omit to disable W&B)")
+    parser.add_argument("--wandb-project",  default="rfmoe",
+                        help="W&B project name (default: rfmoe; set to 'none' to disable)")
     parser.add_argument("--wandb-run-name", default="gate_bias_adapt")
 
     # Paths
@@ -404,6 +403,8 @@ def main():
                         help="Preprocessing cache dir (default: from workspace_config.py)")
 
     args = parser.parse_args()
+    if args.wandb_project and args.wandb_project.lower() == "none":
+        args.wandb_project = None
 
     adapt(
         model_dir=args.model_dir,
