@@ -202,7 +202,7 @@ class RoutingFreeOlmoeModel(OlmoeModel):
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids=position_ids)
 
-        gate_scores_all = []
+        gate_scores_all = [] if output_gate_scores else None
         for layer in self.layers:
             hidden_states, gate_score = layer(
                 hidden_states,
@@ -215,7 +215,7 @@ class RoutingFreeOlmoeModel(OlmoeModel):
                 position_embeddings=position_embeddings,
                 **kwargs,
             )
-            if output_gate_scores:
+            if gate_scores_all is not None:
                 gate_scores_all.append(gate_score)
 
         hidden_states = self.norm(hidden_states)
@@ -224,7 +224,7 @@ class RoutingFreeOlmoeModel(OlmoeModel):
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
         )
-        if output_gate_scores:
+        if gate_scores_all is not None:
             outputs.router_logits = gate_scores_all
 
         return outputs

@@ -12,7 +12,7 @@ export WANDB_SILENT="true"
 #export WANDB_RUN_ID="edw0sl27"
 #export WANDB_RESUME="must"
 
-source /hkfs/home/project/hk-project-p0022189/hgf_mxv5488/miniconda3/bin/activate py310
+# source /hkfs/home/project/hk-project-p0022189/hgf_mxv5488/miniconda3/bin/activate py310
 
 
 #!/usr/bin/env bash
@@ -72,7 +72,31 @@ TS="$(date +%Y%m%d_%H%M%S)"
 MASTER_LOG="${OUT_DIR}/benchmark_prefill_decode_ep_${TS}.log"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY_SCRIPT="/home/hk-project-p0024767/hgf_mxv5488/RoutingFreeMoE/benchmark_prefill_decode_ep.py"
+PY_SCRIPT="${SCRIPT_DIR}/benchmark_prefill_decode_ep.py"
+ENV_FILE="${SCRIPT_DIR}/../.env"
+
+if [[ -f "${ENV_FILE}" ]]; then
+  # Parse .env lines safely (supports optional spaces around '=').
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    # Skip blank/comment lines.
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+    [[ "${line}" =~ ^[[:space:]]*# ]] && continue
+
+    if [[ "${line}" =~ ^[[:space:]]*(HF_TOKEN|HF_READ_TOKEN|HUGGINGFACE_HUB_TOKEN)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      value="${BASH_REMATCH[2]}"
+      value="${value%\"}"
+      value="${value#\"}"
+      value="${value%\'}"
+      value="${value#\'}"
+      export "${key}=${value}"
+    fi
+  done < "${ENV_FILE}"
+fi
+
+if [[ -n "${HF_READ_TOKEN:-}" && -z "${HF_TOKEN:-}" ]]; then
+  export HF_TOKEN="${HF_READ_TOKEN}"
+fi
 
 # Common benchmark knobs (override through environment if needed)
 BATCH_SIZE="${BATCH_SIZE:-1}"
@@ -85,6 +109,14 @@ SEED="${SEED:-42}"
 RF_MODEL_TYPE="${RF_MODEL_TYPE:-routing_free_mixtral}"
 BASELINE_MODEL_TYPE="${BASELINE_MODEL_TYPE:-auto}"
 TRUST_REMOTE_CODE="${TRUST_REMOTE_CODE:-0}"
+VERBOSE_ITER="${VERBOSE_ITER:-1}"
+USE_REAL_TEXT="${USE_REAL_TEXT:-1}"
+TEXT_DATASET_NAME="${TEXT_DATASET_NAME:-Skylion007/openwebtext}"
+TEXT_DATASET_SPLIT="${TEXT_DATASET_SPLIT:-train}"
+TEXT_SAMPLE_RATIO="${TEXT_SAMPLE_RATIO:-0.001}"
+TEXT_COLUMN="${TEXT_COLUMN:-text}"
+TEXT_CACHE_DIR="${TEXT_CACHE_DIR:-${OUT_DIR}/text_cache}"
+EXPERT_PARALLEL="${EXPERT_PARALLEL:-1}"
 
 echo "==== Benchmark Start $(date) ====" | tee -a "${MASTER_LOG}"
 echo "BASELINE_MODEL_REF=${BASELINE_MODEL_REF}" | tee -a "${MASTER_LOG}"
@@ -94,6 +126,10 @@ echo "DETECTED_GPU_COUNT=${GPU_COUNT}" | tee -a "${MASTER_LOG}"
 echo "OUT_DIR=${OUT_DIR}" | tee -a "${MASTER_LOG}"
 echo "BATCH_SIZE=${BATCH_SIZE}, PREFILL_LENGTH=${PREFILL_LENGTH}, DECODE_STEPS=${DECODE_STEPS}" | tee -a "${MASTER_LOG}"
 echo "WARMUP_ITERS=${WARMUP_ITERS}, REPEATS=${REPEATS}, DTYPE=${DTYPE}, SEED=${SEED}" | tee -a "${MASTER_LOG}"
+echo "VERBOSE_ITER=${VERBOSE_ITER}" | tee -a "${MASTER_LOG}"
+echo "USE_REAL_TEXT=${USE_REAL_TEXT}, TEXT_DATASET_NAME=${TEXT_DATASET_NAME}, TEXT_DATASET_SPLIT=${TEXT_DATASET_SPLIT}, TEXT_SAMPLE_RATIO=${TEXT_SAMPLE_RATIO}, TEXT_COLUMN=${TEXT_COLUMN}" | tee -a "${MASTER_LOG}"
+echo "TEXT_CACHE_DIR=${TEXT_CACHE_DIR}" | tee -a "${MASTER_LOG}"
+echo "EXPERT_PARALLEL=${EXPERT_PARALLEL}" | tee -a "${MASTER_LOG}"
 echo | tee -a "${MASTER_LOG}"
 
 run_case() {
@@ -104,8 +140,14 @@ run_case() {
   echo "---- Running ${ngpu} GPU(s): CUDA_VISIBLE_DEVICES=${devices}" | tee -a "${MASTER_LOG}"
   echo "Log file: ${case_log}" | tee -a "${MASTER_LOG}"
 
-  local cmd=(
-    python "${PY_SCRIPT}"
+  local cmd=()
+  if [[ "${EXPERT_PARALLEL}" == "1" && "${ngpu}" -gt 1 ]]; then
+    cmd+=(torchrun --standalone --nproc_per_node "${ngpu}")
+  else
+    cmd+=(python)
+  fi
+  cmd+=(
+    "${PY_SCRIPT}"
     --baseline-model "${BASELINE_MODEL_REF}"
     --rf-model "${RF_MODEL_REF}"
     --baseline-model-type "${BASELINE_MODEL_TYPE}"
@@ -122,6 +164,22 @@ run_case() {
 
   if [[ "${TRUST_REMOTE_CODE}" == "1" ]]; then
     cmd+=(--trust-remote-code)
+  fi
+  if [[ "${VERBOSE_ITER}" == "1" ]]; then
+    cmd+=(--verbose-iter)
+  fi
+  if [[ "${USE_REAL_TEXT}" == "1" ]]; then
+    cmd+=(
+      --use-real-text
+      --text-dataset-name "${TEXT_DATASET_NAME}"
+      --text-dataset-split "${TEXT_DATASET_SPLIT}"
+      --text-sample-ratio "${TEXT_SAMPLE_RATIO}"
+      --text-cache-dir "${TEXT_CACHE_DIR}"
+      --text-column "${TEXT_COLUMN}"
+    )
+  fi
+  if [[ "${EXPERT_PARALLEL}" == "1" && "${ngpu}" -gt 1 ]]; then
+    cmd+=(--expert-parallel)
   fi
 
   "${cmd[@]}" 2>&1 | tee "${case_log}" | tee -a "${MASTER_LOG}"

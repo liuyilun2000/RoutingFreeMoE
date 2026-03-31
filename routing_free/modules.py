@@ -1,6 +1,8 @@
 import torch
+import os
 from torch import nn
 import torch.nn.functional as F
+import torch.distributed as dist
 from transformers.activations import ACT2FN
 
 
@@ -104,12 +106,14 @@ class RoutingFreeGate(nn.Module):
 
         emit_gate_scores = self.output_gate_scores if output_gate_scores is None else output_gate_scores
         gate_score_full = None
+        '''
         if emit_gate_scores:
             gate_score_full = x_flat.new_ones(x_flat.shape[0]) * -float("inf")
             if gate_mask.any():
                 # ensure dtype aligns with destination
                 gate_score_full[idx[gate_mask]] = gate_score[gate_mask].to(gate_score_full.dtype)
             gate_score_full = gate_score_full.view(orig_shape[:-1])
+        '''
 
         return gate_mask_full, gate_score_full, gate_hidden
 
@@ -175,7 +179,7 @@ class RoutingFreeFFNWrapper(nn.Module):
             gate_hidden_valid = gate_hidden[gate_mask_flat]
             # gate_score_full already has -inf for inactive tokens (built in RoutingFreeGate);
             # just extract scores at active positions for weighting the FFN output.
-            gate_score_valid = gate_score_full.view(-1)[gate_mask_flat]
+            # gate_score_valid = gate_score_full.view(-1)[gate_mask_flat]
             mlp_out_valid = self.down_proj(self.act_fn(self.gate_proj_B(gate_hidden_valid)) * self.up_proj(x_valid))
             mlp_out_flat[gate_mask_flat] = (mlp_out_valid * gate_score_valid.unsqueeze(1)).to(dtype=x.dtype)
 
@@ -390,6 +394,89 @@ class RoutingFreeMaskedMoE(nn.Module):
         self.experts = nn.ModuleList(experts)
         self.shared_expert = shared_expert
         self.output_gate_scores = getattr(cfg, "output_gate_scores", True)
+        # In eval/inference, expert parameters are static. Cache stacked tensors to
+        # avoid rebuilding them every forward pass.
+        self._cached_W_A: torch.Tensor | None = None
+        self._cached_scale_vec: torch.Tensor | None = None
+        self._cached_bias_vec: torch.Tensor | None = None
+        self._cache_key: tuple[int, torch.device, torch.dtype] | None = None
+        self.ep_enabled = False
+        self.ep_world_size = 1
+        self.ep_rank = 0
+        if (
+            os.environ.get("RF_EXPERT_PARALLEL", "0") == "1"
+            and dist.is_available()
+            and dist.is_initialized()
+            and dist.get_world_size() > 1
+        ):
+            self.ep_enabled = True
+            self.ep_world_size = dist.get_world_size()
+            self.ep_rank = dist.get_rank()
+        E = len(self.experts)
+        if self.ep_enabled:
+            start = (E * self.ep_rank) // self.ep_world_size
+            end = (E * (self.ep_rank + 1)) // self.ep_world_size
+            self.local_expert_indices = list(range(start, end))
+        else:
+            self.local_expert_indices = list(range(E))
+
+    def _reset_inference_cache(self) -> None:
+        self._cached_W_A = None
+        self._cached_scale_vec = None
+        self._cached_bias_vec = None
+        self._cache_key = None
+
+    def train(self, mode: bool = True):
+        out = super().train(mode)
+        # Drop cache when switching modes so eval picks up latest weights after training.
+        if mode:
+            self._reset_inference_cache()
+        return out
+
+    def _get_stacked_gate_params(
+        self, device: torch.device, dtype: torch.dtype
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+        local_experts = [self.experts[i] for i in self.local_expert_indices]
+        E_local = len(local_experts)
+        cache_key = (tuple(self.local_expert_indices), E_local, device, dtype)
+        use_cache = (not self.training) and self._cache_key == cache_key and self._cached_W_A is not None
+        if use_cache:
+            return self._cached_W_A, self._cached_scale_vec, self._cached_bias_vec
+
+        if E_local == 0:
+            hidden_dim = self.experts[0].gate_proj_A.weight.shape[1]
+            W_A = torch.empty((0, hidden_dim), device=device, dtype=dtype)
+        else:
+            W_A = torch.cat([e.gate_proj_A.weight for e in local_experts], dim=0).to(device=device, dtype=dtype)
+
+        has_scale = any(e.gate.gate_scale is not None for e in local_experts)
+        scale_vec = None
+        if has_scale:
+            scale_vals = []
+            for e in local_experts:
+                if e.gate.gate_scale is None:
+                    scale_vals.append(torch.ones(1, device=device, dtype=dtype))
+                else:
+                    scale_vals.append(e.gate.gate_scale.to(device=device, dtype=dtype))
+            scale_vec = torch.cat(scale_vals, dim=0)
+
+        has_bias = any(e.gate.gate_bias is not None for e in local_experts)
+        bias_vec = None
+        if has_bias:
+            bias_vals = []
+            for e in local_experts:
+                if e.gate.gate_bias is None:
+                    bias_vals.append(torch.zeros(1, device=device, dtype=dtype))
+                else:
+                    bias_vals.append(e.gate.gate_bias.to(device=device, dtype=dtype))
+            bias_vec = torch.cat(bias_vals, dim=0)
+
+        if not self.training:
+            self._cached_W_A = W_A
+            self._cached_scale_vec = scale_vec
+            self._cached_bias_vec = bias_vec
+            self._cache_key = cache_key
+        return W_A, scale_vec, bias_vec
 
     def forward(
         self,
@@ -400,50 +487,53 @@ class RoutingFreeMaskedMoE(nn.Module):
         orig_shape = hidden_states.shape
         x_flat = hidden_states.view(-1, hidden_states.shape[-1])  # [N, H]
         N = x_flat.shape[0]
-        E = len(self.experts)
+        E_local = len(self.local_expert_indices)
         R = self.experts[0].gate_proj_rank
         threshold = self.config.gate_threshold / self.config.gate_temperature
 
         # Batch all gate_proj_A projections into one matmul instead of E separate ones.
         # W_A: [E*R, H]  →  gate_hidden_all: [N, E*R] → [N, E, R]
-        W_A = torch.cat([e.gate_proj_A.weight for e in self.experts], dim=0)
-        gate_hidden_all = F.linear(x_flat, W_A).view(N, E, R)
+        W_A, scale_vec, bias_vec = self._get_stacked_gate_params(
+            device=x_flat.device,
+            dtype=x_flat.dtype,
+        )
+        gate_hidden_all = F.linear(x_flat, W_A).view(N, E_local, R)
 
         # Compute all gate scores (norms) at once: [N, E]
         # _gate_norm applies norm over the last dim, so shape [N, E, R] → [N, E]
         gate_scores_all = self.experts[0].gate._gate_norm(gate_hidden_all)
+        if scale_vec is not None:
+            gate_scores_all = gate_scores_all * scale_vec.unsqueeze(0)
+        if bias_vec is not None:
+            gate_scores_all = gate_scores_all - bias_vec.unsqueeze(0)
 
         out_flat = torch.zeros_like(x_flat)
-        emit_gate_scores = self.output_gate_scores if output_gate_scores is None else output_gate_scores
-        expert_gate_scores_list = [] if emit_gate_scores else None
 
-        for e, expert in enumerate(self.experts):
-            gate_hidden_e = gate_hidden_all[:, e, :].contiguous()  # [N, R]
-            gate_score_e  = gate_scores_all[:, e]                  # [N]
-
-            # Apply per-expert learnable scale / bias (same as RoutingFreeGate.forward)
-            g = expert.gate
-            if g.gate_scale is not None:
-                gate_score_e = gate_score_e * g.gate_scale
-            if g.gate_bias is not None:
-                gate_score_e = gate_score_e - g.gate_bias
+        for local_e, expert_idx in enumerate(self.local_expert_indices):
+            expert = self.experts[expert_idx]
+            gate_hidden_e = gate_hidden_all[:, local_e, :].contiguous()  # [N, R]
+            gate_score_e  = gate_scores_all[:, local_e]                  # [N]
 
             gate_mask_e = gate_score_e >= threshold  # [N]
+            if gate_mask_e.any():
+                active_idx = torch.nonzero(gate_mask_e, as_tuple=False).squeeze(-1)
+                x_active = x_flat[active_idx]
+                gate_hidden_active = gate_hidden_e[active_idx]
+                gate_score_active = gate_score_e[active_idx]
+                expert_out_active = expert.down_proj(
+                    expert.act_fn(expert.gate_proj_B(gate_hidden_active)) * expert.up_proj(x_active)
+                )
+                expert_out_active = (expert_out_active * gate_score_active.unsqueeze(1)).to(dtype=x_flat.dtype)
+                # Accumulate only active-token outputs; inactive tokens remain zero.
+                out_flat.index_add_(0, active_idx, expert_out_active)
 
-            out_flat = out_flat + expert.forward_ffn(
-                x_flat, gate_hidden_e, gate_score_e, gate_mask_e
-            )
-
-            if emit_gate_scores:
-                score_full = gate_score_e.new_full((N,), -float('inf'))
-                if gate_mask_e.any():
-                    score_full[gate_mask_e] = gate_score_e[gate_mask_e]
-                expert_gate_scores_list.append(score_full.view(orig_shape[:-1]))
+        if self.ep_enabled:
+            dist.all_reduce(out_flat, op=dist.ReduceOp.SUM)
 
         out = out_flat.view(orig_shape)
         return (
             out,
-            torch.stack(expert_gate_scores_list, dim=-1) if emit_gate_scores else None,
+            None#torch.stack(expert_gate_scores_list, dim=-1) if emit_gate_scores else None,
         )
 
 class AoEMoE(nn.Module):

@@ -274,7 +274,7 @@ class RoutingFreeMixtralModel(MixtralModel):
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids=position_ids)
 
-        gate_scores_all = []
+        gate_scores_all = [] if output_gate_scores else None
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             hidden_states, gate_score = decoder_layer(
                 hidden_states,
@@ -288,7 +288,7 @@ class RoutingFreeMixtralModel(MixtralModel):
                 **kwargs,
             )
             
-            if output_gate_scores:
+            if gate_scores_all is not None:
                 gate_scores_all.append(gate_score)
 
         hidden_states = self.norm(hidden_states)
@@ -297,7 +297,7 @@ class RoutingFreeMixtralModel(MixtralModel):
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
         )
-        if output_gate_scores:
+        if gate_scores_all is not None:
             outputs.router_logits = gate_scores_all  # attach for aux loss
             
         return outputs
