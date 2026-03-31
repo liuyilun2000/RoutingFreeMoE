@@ -227,3 +227,5 @@ models/*
 # Keep directory placeholder, but ignore all downloaded artifacts/weights
 !models/.gitkeep
 models/**/*.safetensors
+
+benchmark_logs/text_cache/**
