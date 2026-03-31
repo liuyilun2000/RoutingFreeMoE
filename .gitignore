@@ -210,3 +210,12 @@ results/
 Latex/
 
 output*/
+
+# Keep benchmark default model folders tracked
+!output_baseline_mixtral/
+!output_baseline_mixtral/S_1_mixtral_baseline_12L_128Dx12E_top3_lr_1e-3/
+!output_baseline_mixtral/S_1_mixtral_baseline_12L_128Dx12E_top3_lr_1e-3/final_model/
+!output/
+!output/mixtral_rf/
+!output/mixtral_rf/S_rf_lr_2e-3_rank_16/
+!output/mixtral_rf/S_rf_lr_2e-3_rank_16/final_model/
