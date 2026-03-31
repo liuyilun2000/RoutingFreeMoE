@@ -221,3 +221,9 @@ output*/
 !output/mixtral_rf/S_rf_lr_2e-3_rank_16/
 !output/mixtral_rf/S_rf_lr_2e-3_rank_16/final_model/
 !output/mixtral_rf/S_rf_lr_2e-3_rank_16/final_model/**
+
+# Local benchmark model cache
+models/*
+# Keep directory placeholder, but ignore all downloaded artifacts/weights
+!models/.gitkeep
+models/**/*.safetensors

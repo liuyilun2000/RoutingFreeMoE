@@ -22,26 +22,28 @@ set -euo pipefail
 # It calls benchmark_prefill_decode_ep.py and logs each run to a file.
 #
 # Usage:
-#   bash benchmark_prefill_decode_ep.sh \
-#     /path/to/baseline/final_model \
-#     /path/to/rf/final_model \
-#     [GPU_POOL] [OUT_DIR]
+#   BASELINE_HF_REPO=org/baseline-final-model \
+#   RF_HF_REPO=org/rf-final-model \
+#   bash benchmark_prefill_decode_ep.sh [baseline_model_ref] [rf_model_ref] [GPU_POOL] [OUT_DIR]
 #
 # Example:
 #   bash benchmark_prefill_decode_ep.sh \
-#     ./output_baseline/some_run/final_model \
-#     ./output/mixtral_rf/some_run/final_model \
+#     my-org/mixtral-baseline-final-model \
+#     my-org/mixtral-rf-final-model \
 #     "0,1,2,3" \
 #     ./benchmark_logs
-
-BASELINE_MODEL_DIR="${1:-/home/hk-project-p0022189/hgf_mxv5488/RoutingFreeMoE/output_baseline_mixtral/S_1_mixtral_baseline_12L_128Dx12E_top3_lr_1e-3/final_model}"
-RF_MODEL_DIR="${2:-/home/hk-project-p0022189/hgf_mxv5488/RoutingFreeMoE/output/mixtral_rf/S_rf_lr_2e-3_rank_16/final_model}"
+#
+# Model refs can be either:
+# - local path to a model directory
+# - Hugging Face repo id (e.g., org/model-name)
+BASELINE_MODEL_REF="${1:-${BASELINE_HF_REPO:-}}"
+RF_MODEL_REF="${2:-${RF_HF_REPO:-}}"
 GPU_POOL="${3:-}"
 OUT_DIR="${4:-./benchmark_logs}"
 
-if [[ -z "${BASELINE_MODEL_DIR}" || -z "${RF_MODEL_DIR}" ]]; then
+if [[ -z "${BASELINE_MODEL_REF}" || -z "${RF_MODEL_REF}" ]]; then
   echo "Error: missing required args."
-  echo "Usage: bash benchmark_prefill_decode_ep.sh <baseline_model_dir> <rf_model_dir> [gpu_pool] [out_dir]"
+  echo "Usage: BASELINE_HF_REPO=<repo> RF_HF_REPO=<repo> bash benchmark_prefill_decode_ep.sh [baseline_model_ref] [rf_model_ref] [gpu_pool] [out_dir]"
   exit 1
 fi
 
@@ -85,8 +87,8 @@ BASELINE_MODEL_TYPE="${BASELINE_MODEL_TYPE:-auto}"
 TRUST_REMOTE_CODE="${TRUST_REMOTE_CODE:-0}"
 
 echo "==== Benchmark Start $(date) ====" | tee -a "${MASTER_LOG}"
-echo "BASELINE_MODEL_DIR=${BASELINE_MODEL_DIR}" | tee -a "${MASTER_LOG}"
-echo "RF_MODEL_DIR=${RF_MODEL_DIR}" | tee -a "${MASTER_LOG}"
+echo "BASELINE_MODEL_REF=${BASELINE_MODEL_REF}" | tee -a "${MASTER_LOG}"
+echo "RF_MODEL_REF=${RF_MODEL_REF}" | tee -a "${MASTER_LOG}"
 echo "GPU_POOL=${GPU_POOL}" | tee -a "${MASTER_LOG}"
 echo "DETECTED_GPU_COUNT=${GPU_COUNT}" | tee -a "${MASTER_LOG}"
 echo "OUT_DIR=${OUT_DIR}" | tee -a "${MASTER_LOG}"
@@ -104,8 +106,8 @@ run_case() {
 
   local cmd=(
     python "${PY_SCRIPT}"
-    --baseline-model-dir "${BASELINE_MODEL_DIR}"
-    --rf-model-dir "${RF_MODEL_DIR}"
+    --baseline-model "${BASELINE_MODEL_REF}"
+    --rf-model "${RF_MODEL_REF}"
     --baseline-model-type "${BASELINE_MODEL_TYPE}"
     --rf-model-type "${RF_MODEL_TYPE}"
     --cuda-devices "${devices}"

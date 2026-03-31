@@ -30,10 +30,20 @@ def parse_args() -> argparse.Namespace:
         description="Benchmark prefill/decode speed for baseline and RoutingFree models."
     )
     parser.add_argument(
-        "--baseline-model-dir", type=str, required=True, help="Path to baseline model directory."
+        "--baseline-model",
+        "--baseline-model-dir",
+        dest="baseline_model",
+        type=str,
+        required=True,
+        help="Baseline model reference: local directory path or HF repo id.",
     )
     parser.add_argument(
-        "--rf-model-dir", type=str, required=True, help="Path to routing-free model directory."
+        "--rf-model",
+        "--rf-model-dir",
+        dest="rf_model",
+        type=str,
+        required=True,
+        help="Routing-free model reference: local directory path or HF repo id.",
     )
     parser.add_argument(
         "--baseline-model-type",
@@ -241,7 +251,7 @@ def benchmark_decode(
 
 def benchmark_model(
     label: str,
-    model_dir: str,
+    model_ref: str,
     dtype: torch.dtype,
     batch_size: int,
     prefill_length: int,
@@ -251,8 +261,8 @@ def benchmark_model(
     seed: int,
     trust_remote_code: bool,
 ) -> Dict[str, float]:
-    print(f"\n=== Loading {label}: {model_dir}")
-    model, _ = load_model(model_dir, dtype=dtype, trust_remote_code=trust_remote_code)
+    print(f"\n=== Loading {label}: {model_ref}")
+    model, _ = load_model(model_ref, dtype=dtype, trust_remote_code=trust_remote_code)
     input_device = choose_input_device(model)
     n_params = sum(p.numel() for p in model.parameters())
     vocab_size = int(model.config.vocab_size)
@@ -319,7 +329,7 @@ def main() -> None:
 
     baseline_metrics = benchmark_model(
         label="Baseline",
-        model_dir=args.baseline_model_dir,
+        model_ref=args.baseline_model,
         dtype=dtype,
         batch_size=args.batch_size,
         prefill_length=args.prefill_length,
@@ -331,7 +341,7 @@ def main() -> None:
     )
     rf_metrics = benchmark_model(
         label="RoutingFree",
-        model_dir=args.rf_model_dir,
+        model_ref=args.rf_model,
         dtype=dtype,
         batch_size=args.batch_size,
         prefill_length=args.prefill_length,
