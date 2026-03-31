@@ -36,8 +36,8 @@ set -euo pipefail
 # Model refs can be either:
 # - local path to a model directory
 # - Hugging Face repo id (e.g., org/model-name)
-BASELINE_MODEL_REF="${1:-${BASELINE_HF_REPO:-}}"
-RF_MODEL_REF="${2:-${RF_HF_REPO:-}}"
+BASELINE_MODEL_REF="${1:-${BASELINE_HF_REPO:-liuyilun2000/routingfreemoe-baseline-final-model}}"
+RF_MODEL_REF="${2:-${RF_HF_REPO:-liuyilun2000/routingfreemoe-rf-final-model}}"
 GPU_POOL="${3:-}"
 OUT_DIR="${4:-./benchmark_logs}"
 
