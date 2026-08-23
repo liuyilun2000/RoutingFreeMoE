@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html lang="en" class="record">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Routing-Free MoE · Record</title>
+<meta name="description" content="Routing-Free Mixture-of-Experts: bottom-up expert self-activation without routers, Softmax, or TopK. Adaptive dual load-balancing for emergent sparsity.">
+<meta property="og:title" content="Routing-Free MoE">
+<meta property="og:description" content="Experts decide for themselves. No centralized router, Softmax, or TopK — activation emerges from internal confidence and learnable thresholds.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://liuyilun2000.github.io/RoutingFreeMoE/">
+<meta property="og:image" content="assets/images/main_arch.png">
+<link rel="canonical" href="https://liuyilun2000.github.io/RoutingFreeMoE/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@6..144,1..1000&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#101218;
+  --signal:#DF1F22;
+  --signal-bright:#FFADB0;
+  --spark:#DF1F22;
+  --soil:#3A4558;
+  --dim:#6B7385;
+  --mist:#E8ECF2;
+  --paper:#F2F3F5;
+  --white:#FFFFFF;
+  --hair:rgba(16,18,24,.14);
+  --hair-strong:rgba(16,18,24,.28);
+  --disp:'Google Sans Flex','Instrument Sans',system-ui,sans-serif;
+  --head:'Google Sans Flex','Instrument Sans',system-ui,sans-serif;
+  --body:'Google Sans Flex','Instrument Sans',system-ui,sans-serif;
+  --mono:'Google Sans Flex','Instrument Sans',system-ui,sans-serif;
+  --ease:cubic-bezier(.16,1,.3,1);
+  --ease-out:cubic-bezier(.22,1,.36,1);
+  --text:100%;
+  --wrap:1180px;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{
+  background:var(--paper);color:var(--soil);font-family:var(--body);
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+::selection{background:var(--signal);color:var(--ink);}
+a{color:var(--signal);}
+
+#scrollbar{
+  position:fixed;top:0;left:0;height:1px;width:100%;z-index:70;
+  background:var(--ink);
+  transform-origin:left;transform:scaleX(0);
+}
+#scrollbar::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,var(--signal),var(--spark));
+}
+
+/* Boot wipe — design-space entrance */
+#space-boot{
+  position:fixed;inset:0;z-index:100;pointer-events:none;
+  background:var(--paper);
+  transform-origin:top;
+  animation:bootWipe 1.05s var(--ease-out) .15s forwards;
+}
+@keyframes bootWipe{
+  0%{transform:scaleY(1);}
+  100%{transform:scaleY(0);}
+}
+
+.masthead{
+  min-height:100vh;
+  padding:24px 0;position:relative;
+  overflow:hidden;isolation:isolate;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--ink);color:rgba(232,236,242,.88);
+}
+.hero-shell{
+  position:relative;
+  box-sizing:border-box;
+  width:min(var(--wrap), calc(100% - 48px));
+  min-height:max(calc(100vh - 48px), min-content);
+  margin:0 auto;
+  display:flex;align-items:center;
+}
+.masthead .wrap-narrow{
+  position:relative;z-index:1;width:100%;
+  max-width:none;margin:0;padding:44px clamp(22px, 3.2vw, 40px);text-align:left;
+}
+.hero-icons{
+  display:block;width:min(413px,100%);height:auto;
+  margin:0 0 52px;object-fit:contain;object-position:left center;
+}
+.brand-hero{
+  font-family:var(--disp);font-weight:600;font-style:normal;color:var(--white);
+  font-size:clamp(40px,7.2vw,92px);line-height:.82;font-optical-sizing:auto;
+  display:flex;flex-direction:column;align-items:flex-start;gap:.02em;
+  overflow:visible;padding-bottom:.06em;
+}
+.brand-hero .bh-line{display:block;}
+.brand-hero .bh-em{
+  color:var(--white);-webkit-text-stroke:0;font-weight:900;
+}
+.brand-hero .bh-em b{
+  color:transparent;-webkit-text-stroke:1.25px rgba(232,236,242,.9);font-weight:900;
+}
+.authors{margin-top:36px;font-size:14.5px;color:rgba(232,236,242,.78);}
+.authors a{color:rgba(232,236,242,.88);text-decoration:none;border-bottom:1px solid rgba(223,31,34,.55);}
+.authors a:hover{color:var(--signal);}
+.authors sup{color:var(--signal);}
+.affil{margin-top:8px;font-size:12.5px;color:rgba(232,236,242,.5);}
+.affil sup{color:var(--signal);}
+.emails{
+  margin-top:8px;font-size:12.5px;color:rgba(232,236,242,.5);
+  display:flex;flex-wrap:wrap;justify-content:flex-start;gap:0 1.25em;
+}
+.emails a{
+  color:rgba(232,236,242,.55);text-decoration:none;border-bottom:1px solid rgba(223,31,34,.45);
+}
+.emails a:hover{color:var(--signal);}
+.btnrow{margin-top:40px;display:flex;gap:10px;justify-content:flex-start;flex-wrap:wrap;}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:10px;
+  font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;padding:14px 22px;border-radius:0;text-decoration:none;
+  background:var(--white);color:var(--ink);border:1px solid var(--white);
+  transition:background .3s var(--ease),border-color .3s var(--ease),color .3s var(--ease),gap .3s var(--ease);
+}
+.btn svg{width:14px;height:14px;flex:0 0 auto;display:block;transition:transform .3s var(--ease);}
+.btn:hover{background:var(--signal);border-color:var(--signal);color:var(--ink);gap:14px;}
+.btn:hover svg.arr{transform:translateX(3px);}
+.btn.alt{background:transparent;color:rgba(232,236,242,.88);border:1px solid rgba(232,236,242,.28);}
+.btn.alt:hover{background:transparent;border-color:var(--signal);color:var(--signal);gap:14px;}
+.btn .arr{width:14px;height:14px;}
+.btn .ico{width:15px;height:15px;}
+
+section{position:relative;padding:72px 0;isolation:isolate;}
+section.band{background:var(--white);}
+section.grey{background:var(--paper);}
+section.ink{
+  background:var(--ink);color:rgba(232,236,242,.88);
+}
+
+/* Ambient particle field — sits behind section content */
+.has-ambient{position:relative;isolation:isolate;}
+.ambient-canvas{
+  position:absolute;inset:0;width:100%;height:100%;
+  pointer-events:none;z-index:0;
+}
+.has-ambient > .wrap,
+.has-ambient > .hero-shell,
+.has-ambient > .foot-inner,
+.has-ambient > .wrap-narrow{
+  position:relative;z-index:1;
+}
+section.ink h2{color:var(--white);}
+section.ink .lede{color:rgba(232,236,242,.78);}
+section.ink .lede b{color:var(--white);}
+section.ink .bench{
+  border-color:rgba(232,236,242,.12);
+  background:rgba(232,236,242,.04);
+}
+section.ink table.results th,
+section.ink table.results td{border-bottom-color:rgba(232,236,242,.1);}
+section.ink table.results th{
+  color:rgba(232,236,242,.55);
+  background:rgba(232,236,242,.08);
+}
+section.ink table.results thead tr:last-child th{background:rgba(232,236,242,.05);}
+section.ink table.results th.stub,
+section.ink table.results td.stub{color:rgba(232,236,242,.88);}
+section.ink table.results td{color:rgba(232,236,242,.78);}
+section.ink table.results td.dash{color:rgba(232,236,242,.4);}
+section.ink table.results .hi{color:var(--signal-bright);}
+section.ink table.results .sup{color:var(--spark);}
+.wrap{max-width:min(var(--wrap),96vw);margin:0 auto;padding:0 2.5vw;}
+h2{
+  font-family:var(--head);font-weight:800;color:var(--ink);
+  font-size:clamp(30px,4.2vw,52px);line-height:1.12;max-width:none;overflow:visible;padding-bottom:.08em;
+}
+h2 .leaf{color:var(--signal);font-style:normal;}
+.lede{margin-top:18px;max-width:var(--text);color:var(--soil);font-size:16.5px;line-height:1.58;}
+.lede b{color:var(--ink);font-weight:600;}
+.hairline{border:none;border-top:1px solid var(--hair);max-width:none;margin:0;}
+.wrap > .hairline{margin:32px 0;}
+
+.rv{
+  opacity:0;transform:translateY(28px);
+  transition:opacity .9s var(--ease-out),transform .9s var(--ease-out);
+}
+.rv.in{opacity:1;transform:none;}
+.rv-st>*{
+  opacity:0;transform:translateY(20px);
+  transition:opacity .75s var(--ease-out),transform .75s var(--ease-out);
+}
+.rv-st.in>*{opacity:1;transform:none;}
+.rv-st.in>*:nth-child(1){transition-delay:.06s;}
+.rv-st.in>*:nth-child(2){transition-delay:.14s;}
+.rv-st.in>*:nth-child(3){transition-delay:.22s;}
+.rv-st.in>*:nth-child(4){transition-delay:.3s;}
+.masthead .rv{transition-delay:calc(var(--d,0)*.07s + .35s);}
+
+
+.ops{
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;
+  margin-top:32px;border-top:1px solid var(--hair);
+}
+.op{padding:28px 0 8px;min-width:0;}
+.op h3{
+  font-family:var(--head);font-size:20px;color:var(--ink);margin-bottom:10px;font-weight:600;
+  line-height:1.2;text-align:left;
+}
+.op p{font-size:14.5px;line-height:1.55;color:var(--soil);max-width:none;}
+
+.fig-block{margin-top:32px;}
+#results .fig-block{margin-top:14px;}
+.fig-block img{
+  width:100%;height:auto;display:block;
+  border:none;background:transparent;
+}
+
+.perf-chart{
+  position:relative;width:100%;
+  border:none;background:transparent;overflow:visible;
+}
+.perf-chart svg{display:block;width:100%;height:auto;margin:0;padding:0;}
+.perf-chart .tick{
+  font-family:var(--body);font-size:11px;font-weight:500;fill:var(--dim);
+}
+.perf-chart .axis-label{
+  font-family:var(--body);font-size:12px;font-weight:500;fill:var(--soil);
+}
+.perf-chart .grid-line{
+  stroke:rgba(18,22,31,.08);stroke-width:1;stroke-dasharray:3 4;
+}
+.perf-chart .trace{
+  opacity:.9;fill:none;
+}
+.perf-chart .perf-dot{
+  opacity:0;cursor:pointer;transition:opacity .2s;
+}
+.perf-chart .perf-dot.wait{opacity:0;}
+.perf-chart .perf-dot.show{opacity:1;}
+.perf-chart .perf-dot.dim{opacity:.22;}
+.perf-chart .perf-dot.hi{opacity:1;}
+.perf-chart .ann-shade{opacity:0;}
+.perf-chart .ann-line{
+  stroke:rgba(18,22,31,.4);stroke-width:1;fill:none;opacity:0;
+}
+.perf-chart .ann-text{
+  font-family:var(--body);font-size:12px;font-weight:500;font-style:italic;fill:var(--ink);opacity:0;
+}
+.perf-chart .scale-tag{
+  font-family:var(--mono);font-size:11px;font-weight:600;fill:var(--signal);opacity:0;
+  text-transform:uppercase;
+}
+.perf-chart .legend-label{
+  font-family:var(--mono);font-size:11px;font-weight:500;fill:var(--soil);
+}
+.perf-chart .legend-mark{
+  opacity:1;
+}
+.perf-chart.ready .anim-ann{
+  animation:perfFade 0.82s cubic-bezier(.22,1,.36,1) both;
+}
+.perf-tip{
+  position:absolute;pointer-events:none;z-index:2;
+  background:var(--ink);color:var(--mist);
+  font-family:var(--body);font-size:12px;line-height:1.45;
+  padding:8px 12px;border-radius:2px;
+  opacity:0;transform:translate(-50%,-120%);
+  transition:opacity .18s;
+  white-space:nowrap;max-width:min(280px,80vw);
+}
+.perf-tip.on{opacity:1;}
+.perf-tip b{color:var(--white);font-weight:600;}
+@keyframes perfFade{
+  from{opacity:0;}
+  to{opacity:1;}
+}
+@media (prefers-reduced-motion:reduce){
+  .perf-chart .perf-dot,
+  .perf-chart .ann-shade,
+  .perf-chart .ann-line,
+  .perf-chart .ann-text,
+  .perf-chart .scale-tag{opacity:1;}
+  .perf-chart.ready .anim-ann{animation:none;}
+}
+
+.results-bars{
+  position:relative;width:100%;
+  margin:0;border:none;background:transparent;overflow:visible;
+}
+.results-bars .rb-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:18px 14px;
+}
+.results-bars .rb-panel{
+  min-width:0;background:transparent;
+  opacity:0;transform:translateY(14px);
+  transition:opacity .55s cubic-bezier(.22,1,.36,1),transform .55s cubic-bezier(.22,1,.36,1);
+  transition-delay:calc(var(--panel-i,0) * .1s);
+}
+.results-bars.rb-ready .rb-panel.in{
+  opacity:1;transform:none;
+}
+.results-bars .rb-panel svg{
+  display:block;width:100%;height:auto;
+}
+.results-bars .rb-chrome{
+  opacity:0;
+  transition:opacity .45s ease;
+  transition-delay:calc(var(--panel-i,0) * .1s + .08s);
+}
+.results-bars.rb-ready .rb-panel.in .rb-chrome{opacity:1;}
+.results-bars .rb-title,
+section.ink .ep-chart .rb-title{
+  font-family:var(--head);font-size:12px;font-weight:700;fill:var(--white);
+}
+.results-bars .rb-sub,
+section.ink .ep-chart .rb-sub{
+  font-family:var(--body);font-size:9px;font-weight:400;fill:rgba(232,236,242,.5);
+}
+.results-bars .rb-tick,
+section.ink .ep-chart .rb-tick{
+  font-family:var(--body);font-size:8px;font-weight:500;fill:rgba(232,236,242,.45);
+}
+.results-bars .rb-val,
+section.ink .ep-chart .rb-val{
+  font-family:var(--mono);font-size:7.5px;font-weight:600;fill:rgba(232,236,242,.78);
+}
+.results-bars .rb-scale,
+section.ink .ep-chart .rb-scale{
+  font-family:var(--mono);font-size:9px;font-weight:600;fill:rgba(232,236,242,.5);
+  text-transform:uppercase;
+}
+.results-bars .rb-grid-line,
+section.ink .ep-chart .rb-grid-line{
+  stroke:rgba(232,236,242,.1);stroke-width:1;
+}
+.results-bars .rb-sep,
+section.ink .ep-chart .rb-sep{
+  stroke:rgba(232,236,242,.22);stroke-width:1;stroke-dasharray:2.5 3;
+}
+.results-bars .rb-baseline,
+section.ink .ep-chart .rb-baseline{
+  stroke:rgba(232,236,242,.28);stroke-width:1;
+}
+.results-bars .rb-bar,
+section.ink .ep-chart .rb-bar{cursor:pointer;}
+.results-bars .rb-legend,
+section.ink .ep-legend{
+  display:flex;flex-wrap:wrap;justify-content:center;align-items:center;
+  gap:14px 18px;
+  font-family:var(--mono);font-size:11px;color:rgba(232,236,242,.72);
+}
+.results-bars .rb-legend{margin-top:16px;}
+.ep-bars .ep-legend{margin-top:6px;}
+.results-bars .rb-legend{
+  opacity:0;transform:translateY(8px);
+  transition:opacity .5s ease .35s,transform .5s ease .35s;
+}
+.results-bars.rb-ready .rb-legend{
+  opacity:1;transform:none;
+}
+.results-bars .rb-legend-item,
+section.ink .ep-legend .rb-legend-item{
+  display:inline-flex;align-items:center;gap:7px;
+}
+.results-bars .rb-swatch,
+section.ink .ep-legend .rb-swatch{
+  width:11px;height:11px;border-radius:2px;display:inline-block;
+  border:1px solid rgba(255,255,255,.25);box-sizing:border-box;
+}
+.results-bars .rb-tip{
+  position:absolute;pointer-events:none;z-index:2;
+  background:var(--white);color:var(--ink);
+  font-family:var(--body);font-size:12px;line-height:1.45;
+  padding:8px 12px;border-radius:2px;
+  opacity:0;transform:translate(-50%,-120%);
+  transition:opacity .18s;
+  white-space:nowrap;max-width:min(280px,80vw);
+}
+.results-bars .rb-tip.on{opacity:1;}
+.results-bars .rb-tip b{color:var(--ink);font-weight:600;}
+@media (max-width:900px){
+  .results-bars .rb-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 10px;}
+}
+@media (prefers-reduced-motion:reduce){
+  .results-bars .rb-panel,
+  .results-bars .rb-chrome,
+  .results-bars .rb-legend{
+    opacity:1;transform:none;transition:none;
+  }
+  .ep-bars .ep-chart,
+  .ep-bars .rb-chrome,
+  .ep-bars .ep-legend{
+    opacity:1;transform:none;transition:none;
+  }
+  .dual-chart,
+  .dual-chart .dual-chrome,
+  .dual-chart .dual-dot{opacity:1;transform:none;transition:none;}
+}
+
+.dual-plots{
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 20px;
+  margin-top:12px;
+}
+.dual-plot{margin:0;min-width:0;}
+.dual-chart{position:relative;width:100%;border:none;background:transparent;overflow:visible;}
+.dual-chart svg{display:block;width:100%;height:auto;}
+.dual-chart .tick{font-family:var(--body);font-size:9px;font-weight:500;fill:var(--dim);}
+.dual-chart .axis-label{font-family:var(--body);font-size:10px;font-weight:600;fill:var(--soil);}
+.dual-chart .legend-label{font-family:var(--body);font-size:8.5px;font-weight:500;fill:var(--dim);}
+.dual-chart .grid-line{stroke:rgba(16,18,24,.08);stroke-width:1;}
+.dual-chart .grid-line-x{stroke:rgba(16,18,24,.05);}
+.dual-chart .axis-line{stroke:rgba(16,18,24,.22);stroke-width:1;}
+.dual-chart .line-perf{stroke:var(--signal);}
+.dual-chart .line-eff{stroke:#2A9D8F;}
+.dual-chart .dot-perf{fill:var(--signal);stroke:var(--white);stroke-width:1.2;}
+.dual-chart .dot-eff{fill:#2A9D8F;stroke:var(--white);stroke-width:1.2;}
+.dual-chart .dot-perf.hi,.dual-chart .dot-eff.hi{stroke-width:1.6;}
+.dual-chart{
+  opacity:0;transform:translateY(14px);
+  transition:opacity .55s cubic-bezier(.22,1,.36,1),transform .55s cubic-bezier(.22,1,.36,1);
+  transition-delay:calc(var(--panel-i,0) * .1s);
+}
+.dual-plots.dual-ready .dual-chart.in{opacity:1;transform:none;}
+.dual-chart .dual-chrome{
+  opacity:0;
+  transition:opacity .45s ease;
+  transition-delay:calc(var(--panel-i,0) * .1s + .06s);
+}
+.dual-plots.dual-ready .dual-chart.in .dual-chrome{opacity:1;}
+.dual-chart .dual-line{opacity:.92;}
+.dual-plot figcaption{
+  margin-top:10px;font-size:13px;line-height:1.45;color:var(--dim);
+}
+.dual-plot figcaption b{color:var(--ink);font-weight:600;}
+section.ink .dual-chart .tick{fill:rgba(232,236,242,.55);}
+section.ink .dual-chart .axis-label{fill:rgba(232,236,242,.78);}
+section.ink .dual-chart .legend-label{fill:rgba(232,236,242,.55);}
+section.ink .dual-chart .grid-line{stroke:rgba(232,236,242,.1);}
+section.ink .dual-chart .grid-line-x{stroke:rgba(232,236,242,.06);}
+section.ink .dual-chart .axis-line{stroke:rgba(232,236,242,.22);}
+section.ink .dual-chart .dot-perf{stroke:var(--ink);}
+section.ink .dual-chart .dot-eff{stroke:var(--ink);}
+section.ink .dual-plot figcaption{color:rgba(232,236,242,.55);}
+section.ink .dual-plot figcaption b{color:rgba(232,236,242,.88);}
+section.ink .fig-duo figcaption{color:rgba(232,236,242,.55);}
+section.ink .fig-duo figcaption b{color:rgba(232,236,242,.88);}
+@media (max-width:900px){
+  .dual-plots{grid-template-columns:1fr;}
+}
+
+.fig-trio{
+  margin-top:28px;
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;
+}
+.fig-trio figure{margin:0;min-width:0;}
+.fig-trio img{
+  width:100%;height:auto;display:block;
+  border:none;background:transparent;
+}
+.fig-trio figcaption{
+  margin-top:10px;font-size:13px;line-height:1.4;color:var(--dim);
+}
+.fig-trio figcaption b{color:var(--ink);font-weight:600;}
+.fig-trio.img-bottom figure{display:flex;flex-direction:column;height:100%;}
+.fig-trio.img-bottom img{margin-top:auto;}
+.fig-trio.eq-h img{
+  aspect-ratio:546 / 368;
+  object-fit:contain;
+  object-position:left center;
+}
+.fig-duo{
+  margin-top:28px;
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;
+}
+#deployment .fig-duo{margin-top:4px;}
+#deployment .ep-captions{margin-top:20px;}
+#deployment .ep-captions .fig-label{margin-top:0;}
+.fig-duo figure{margin:0;min-width:0;}
+.fig-duo img{
+  width:100%;height:auto;display:block;
+  border:none;background:transparent;
+}
+.fig-duo figcaption{
+  margin-top:10px;font-size:13px;line-height:1.4;color:var(--dim);
+}
+.fig-duo figcaption b{color:var(--ink);font-weight:600;}
+.ep-chart{position:relative;width:100%;border:none;background:transparent;overflow:visible;}
+.ep-chart svg{display:block;width:100%;height:auto;}
+.ep-bars .ep-chart{
+  opacity:0;transform:translateY(14px);
+  transition:opacity .55s cubic-bezier(.22,1,.36,1),transform .55s cubic-bezier(.22,1,.36,1);
+  transition-delay:calc(var(--panel-i,0) * .1s);
+}
+.ep-bars.ep-ready .ep-chart.in{opacity:1;transform:none;}
+.ep-bars .rb-chrome{
+  opacity:0;
+  transition:opacity .45s ease;
+  transition-delay:calc(var(--panel-i,0) * .1s + .08s);
+}
+.ep-bars.ep-ready .ep-chart.in .rb-chrome{opacity:1;}
+.ep-bars .ep-legend{
+  opacity:0;transform:translateY(8px);
+  transition:opacity .5s ease .35s,transform .5s ease .35s;
+}
+.ep-bars.ep-ready .ep-legend{opacity:1;transform:none;}
+.ep-chart .ep-axis-label{
+  font-family:var(--body);font-size:10px;font-weight:600;fill:rgba(232,236,242,.78);
+}
+.ep-tip{
+  position:absolute;pointer-events:none;z-index:2;
+  background:var(--white);color:var(--ink);
+  font-family:var(--body);font-size:12px;line-height:1.45;
+  padding:8px 12px;border-radius:2px;
+  opacity:0;transform:translate(-50%,-120%);
+  transition:opacity .18s;
+  white-space:nowrap;max-width:min(280px,80vw);
+  box-shadow:0 4px 16px rgba(16,18,24,.12);
+}
+.ep-tip.on{opacity:1;}
+.ep-tip b{color:var(--ink);font-weight:600;}
+.fig-stack{margin-top:28px;display:flex;flex-direction:column;gap:18px;}
+.fig-stack img{
+  width:100%;height:auto;display:block;
+  border:none;background:transparent;
+}
+.two-bench{
+  margin-top:28px;
+  display:grid;grid-template-columns:1fr 1fr;gap:18px;
+}
+.two-bench .bench{margin-top:0;}
+
+.fig-label{
+  max-width:none;margin:14px 0 0;
+  font-family:var(--body);font-size:13.5px;line-height:1.65;color:var(--dim);
+}
+.fig-label b{color:var(--ink);font-weight:600;}
+.fig-label a{color:var(--signal);}
+.fig-label a:hover{color:var(--ink);}
+.fig-label sub,.lede sub,figcaption sub{
+  font-size:.72em;line-height:0;vertical-align:baseline;position:relative;bottom:-.18em;
+}
+section.ink .fig-label{color:rgba(232,236,242,.55);}
+section.ink .fig-label b{color:rgba(232,236,242,.88);}
+section.ink .fig-label a{color:var(--signal-bright);}
+
+
+.bench{
+  margin-top:28px;overflow-x:auto;border:1px solid var(--hair);
+  background:var(--white);border-radius:0;
+}
+table.results{
+  width:100%;border-collapse:collapse;font-size:13.5px;min-width:820px;
+}
+table.results th,table.results td{
+  padding:11px 9px;text-align:center;border-bottom:1px solid var(--hair);
+}
+table.results th{
+  font-family:var(--mono);font-size:10px;text-transform:uppercase;
+  color:var(--dim);background:var(--mist);font-weight:500;
+}
+table.results thead th.group{text-align:center;}
+table.results th.stub,table.results td.stub{
+  text-align:left;font-family:var(--mono);font-size:12px;
+  color:var(--ink);white-space:nowrap;
+}
+table.results td{color:var(--soil);}
+table.results td.num{
+  font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+table.results td.dash{color:var(--dim);}
+table.results tr:last-child td{border-bottom:none;}
+table.results .hi{color:var(--signal);font-weight:600;}
+table.results .sup{
+  font-size:10px;vertical-align:super;line-height:0;color:var(--spark);font-weight:600;
+}
+table.results tbody tr.ours td{background:rgba(223,31,34,.1);}
+section.ink table.results tbody tr.ours td{background:rgba(223,31,34,.14);}
+
+.cite-box{
+  margin-top:28px;background:var(--ink);color:var(--mist);
+  padding:28px;position:relative;max-width:none;
+  border:1px solid rgba(16,18,24,.9);
+}
+.cite-box pre{
+  font-family:var(--mono);font-size:12.5px;line-height:1.7;white-space:pre-wrap;
+  overflow-x:auto;color:#C5D0DB;
+}
+.cite-box .copy{
+  position:absolute;top:16px;right:16px;
+  font-family:var(--mono);font-size:11px;text-transform:uppercase;
+  background:transparent;color:var(--mist);border:1px solid rgba(255,255,255,.18);
+  padding:8px 14px;cursor:pointer;transition:background .2s,color .2s,border-color .2s;
+}
+.cite-box .copy:hover{background:var(--signal);color:var(--ink);border-color:var(--signal);}
+.cite-box .copy.ok{background:var(--spark);color:var(--ink);border-color:var(--spark);}
+
+footer{
+  background:var(--ink);color:#8A93A6;padding:80px 0 48px;
+  position:relative;overflow:hidden;
+}
+.foot-inner{
+  max-width:min(var(--wrap),96vw);margin:0 auto;padding:0 2.5vw;
+  position:relative;z-index:1;
+}
+.foot-brand-row{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  margin-bottom:10px;
+}
+.foot-brand{
+  font-family:var(--disp);font-size:clamp(28px,4vw,44px);font-weight:600;
+  color:var(--white);margin:0;font-optical-sizing:auto;
+  line-height:1.15;text-align:left;
+}
+.foot-top{
+  display:inline-flex;align-items:center;gap:8px;flex:0 0 auto;
+  font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;
+  color:#8A93A6;text-decoration:none;padding:8px 12px;border:1px solid rgba(255,255,255,.18);
+  transition:color .2s,border-color .2s,background .2s;
+  white-space:nowrap;
+}
+.foot-top svg{width:14px;height:14px;flex:0 0 auto;display:block;}
+.foot-top:hover{color:var(--white);border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.06);}
+.foot-kicker{
+  font-family:var(--mono);font-size:11px;text-transform:uppercase;
+  color:rgba(232,236,242,.4);margin-bottom:8px;
+}
+.foot-links{display:flex;gap:8px;flex-wrap:wrap;margin:28px 0 44px;}
+.foot-links a{
+  display:inline-flex;align-items:center;gap:8px;
+  font-family:var(--mono);font-size:11px;text-transform:uppercase;
+  color:#8A93A6;text-decoration:none;padding:8px 12px;border:1px solid transparent;
+  transition:color .2s,border-color .2s;
+}
+.foot-links a svg{width:14px;height:14px;flex:0 0 auto;display:block;}
+.foot-links a:hover{color:var(--white);border-color:rgba(255,255,255,.18);}
+.foot-notes{
+  border-top:1px solid rgba(255,255,255,.08);padding-top:24px;
+  display:flex;flex-direction:column;gap:1.1em;
+}
+.foot-note{
+  display:grid;grid-template-columns:2.4em 1fr;column-gap:.35em;
+  font-size:13px;line-height:1.6;margin:0;
+}
+.foot-note .fn-mark{text-align:right;user-select:none;}
+
+@media (max-width:900px){
+  .ops,.fig-trio,.fig-duo,.two-bench{grid-template-columns:1fr;}
+    .op{border-bottom:1px solid var(--hair);}
+  .op:last-child{border-bottom:none;}
+  .masthead{min-height:auto;padding:16px 0;}
+  .hero-shell{
+    width:min(var(--wrap), calc(100% - 32px));
+    min-height:min-content;
+  }
+  .masthead .wrap-narrow{padding:32px 20px;}
+  .brand-hero .bh-em{-webkit-text-stroke-width:1px;}
+  section{padding:56px 0;}
+}
+@media (prefers-reduced-motion:reduce){
+  .rv,.rv-st>*{opacity:1;transform:none;transition:none;}
+  #space-boot{animation:none !important;display:none;}
+  .ambient-canvas{display:none !important;}
+}
+
+/* ===== RECORD / SLIDE MODE ===== */
+html.record, html.record body{
+  height:100%;
+  overflow:hidden;
+  background:var(--paper);
+}
+html.record body{margin:0;}
+html.record #space-boot,
+html.record #scrollbar{display:none !important;}
+html.record{scroll-behavior:auto;}
+
+.stage{
+  position:fixed;inset:0;z-index:1;
+  background:transparent;
+}
+.deck{
+  width:100%;height:100%;
+  overflow-x:hidden;overflow-y:auto;
+  scroll-snap-type:y mandatory;
+  scroll-behavior:smooth;
+  overscroll-behavior:contain;
+  scrollbar-width:none;
+  -ms-overflow-style:none;
+}
+.deck::-webkit-scrollbar{display:none;width:0;height:0;}
+
+html.record .page{
+  box-sizing:border-box;
+  width:100%;
+  height:100%;
+  min-height:100%;
+  max-height:100%;
+  padding:0 !important;
+  margin:0;
+  scroll-snap-align:start;
+  scroll-snap-stop:always;
+  overflow:hidden;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  position:relative;
+}
+html.record .masthead.page{
+  min-height:0 !important;
+  background:var(--ink);
+}
+html.record footer.page{
+  padding:0 !important;
+  min-height:0 !important;
+}
+html.record .page-fit{
+  width:100%;height:100%;
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;
+  padding:clamp(24px, 4vh, 48px) clamp(24px, 4vw, 56px);
+  box-sizing:border-box;
+}
+html.record .page-inner{
+  width:min(1180px, 100%);
+  max-width:100%;
+  transform-origin:center center;
+  will-change:transform;
+}
+html.record .page-inner .wrap,
+html.record .page-inner .hero-shell,
+html.record .page-inner .foot-inner{
+  width:100%;
+  max-width:100%;
+  margin:0;
+  padding:0;
+  min-height:0 !important;
+  height:auto;
+}
+html.record .hero-shell{width:100% !important;}
+html.record .masthead .wrap-narrow{padding:0;}
+html.record h2{font-size:clamp(26px, 4vw, 48px);}
+html.record .lede{font-size:clamp(14px, 1.35vw, 16.5px);margin-top:12px;}
+html.record .masthead .brand-hero{font-size:clamp(48px, 8.2vw, 104px);}
+html.record .masthead .hero-icons{margin:0 0 40px;width:min(480px,78%);}
+html.record .masthead .authors{margin-top:36px;font-size:clamp(16px,1.55vw,20px);line-height:1.55;}
+html.record .masthead .affil{margin-top:14px;font-size:clamp(14px,1.3vw,17px);}
+html.record .masthead .emails{margin-top:14px;font-size:clamp(14px,1.3vw,17px);gap:0 1.6em;}
+html.record .masthead .btnrow,
+html.record .masthead .btn{display:none !important;}
+html.record .fig-label,
+html.record figcaption{font-size:clamp(12px,1.15vw,13.5px);}
+/* Title → visual: one outer gap; chart JS drops SVG top pad in record mode */
+html.record h2{margin-bottom:0;padding-bottom:0;}
+html.record .fig-block,
+html.record .fig-trio,
+html.record .fig-duo,
+html.record .dual-plots,
+html.record .results-bars,
+html.record .ep-bars,
+html.record #results .fig-block,
+html.record #deployment .ep-bars{
+  margin-top:28px;
+}
+html.record .ep-bars .fig-duo,
+html.record #deployment .ep-bars .fig-duo{margin-top:0;}
+html.record #deployment .ep-captions{margin-top:16px;}
+html.record .perf-chart,
+html.record .dual-chart,
+html.record .ep-chart,
+html.record .results-bars{
+  display:block;
+}
+html.record .ops{margin-top:16px;gap:16px;}
+html.record .op{padding:16px 0 4px;}
+html.record .op h3{font-size:16px;}
+html.record .op p{font-size:13px;}
+html.record .foot-brand{font-size:clamp(24px,3.5vw,40px);}
+html.record .foot-notes{margin-top:16px;}
+html.record .foot-note{font-size:12px;}
+html.record .cite-box{padding:20px;margin-top:16px;}
+html.record .cite-box pre{font-size:12px;}
+html.record hr.hairline{display:none;}
+html.record #stability .hairline{
+  display:block;
+  margin:18px 0 14px;
+  border-top:1px solid var(--hair-strong);
+}
+/* Snap leaving slides to hidden state without replaying exit transitions */
+html.record .page.record-reset .rv,
+html.record .page.record-reset .rv-st>*,
+html.record .page.record-reset .dual-chart,
+html.record .page.record-reset .ep-chart,
+html.record .page.record-reset .results-bars .rb-panel,
+html.record .page.record-reset .results-bars .rb-legend,
+html.record .page.record-reset .ep-bars .ep-legend{
+  transition:none !important;
+}
+
+</style>
+</head>
+<body>
+<div class="stage">
+<div class="deck" id="deck">
+<header class="masthead page" id="top">
+  <div class="hero-shell">
+    <div class="wrap-narrow">
+      <img class="hero-icons rv" style="--d:0" src="assets/images/icons.svg" alt="LMU Munich, UCLA, MCML, and affiliated institutions" width="413" height="23">
+      <p class="brand-hero rv" style="--d:1">
+        <span class="bh-line bh-em"><b>Routing-Free</b></span>
+        <span class="bh-line bh-em">Mixture-of-Experts</span>
+      </p>
+      <p class="authors rv" style="--d:2">
+        <a href="https://liuyilun2000.github.io/" target="_blank" rel="noopener noreferrer">Yilun Liu</a><sup>✦,1,3</sup>&nbsp;&nbsp;
+        <a href="https://jingrug.github.io/">Jinru Han</a><sup>✦,2</sup>&nbsp;&nbsp;
+        <a href="https://yansikuan.github.io/" target="_blank" rel="noopener noreferrer">Sikuan Yan</a><sup>1</sup>&nbsp;&nbsp;
+        <a href="https://www.dbs.ifi.lmu.de/~tresp/" target="_blank" rel="noopener noreferrer">Volker Tresp</a><sup>1,3</sup>&nbsp;&nbsp;
+        <a href="https://yunpuma.github.io/" target="_blank" rel="noopener noreferrer">Yunpu Ma</a><sup>1,3</sup>
+      </p>
+      <p class="affil rv" style="--d:3">
+        <sup>1</sup>LMU Munich&nbsp;&nbsp;&nbsp;<sup>2</sup>UCLA&nbsp;&nbsp;&nbsp;<sup>3</sup>MCML&nbsp;&nbsp;&nbsp;<sup>✦</sup>Equal contribution
+      </p>
+      <p class="emails rv" style="--d:4">
+        <a href="mailto:yilun.liu@tum.de">yilun.liu@tum.de</a>
+        <a href="mailto:jinruhan1219@ucla.edu">jinruhan1219@ucla.edu</a>
+        <a href="mailto:cognitive.yunpu@gmail.com">cognitive.yunpu@gmail.com</a>
+      </p>
+    </div>
+  </div>
+</header>
+
+<section id="method" class="page band">
+  <div class="wrap">
+    <h2 class="rv">A Bottom-Up Architecture<br><span class="leaf">Decentralized by Design</span></h2>
+
+    <div class="fig-block fig1 rv">
+      <img src="assets/images/main_arch.png" alt="Standard MoE with centralized router versus Routing-Free MoE where each expert self-activates" width="1752" height="439" loading="eager">
+      <p class="fig-label">
+        <b>Architecture overview.</b>
+        Standard MoE relies on routing to orchestrate expert activations.
+        Routing-Free MoE lets each expert independently determine its own activation.
+        Green indicates activated components; red indicates inactive ones; yellow indicates trainable ones.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="page" id="results">
+  <div class="wrap">
+    <h2 class="rv"><span class="leaf">Better Performance</span> <br>Across Scales</h2>
+
+    <div class="fig-block rv">
+      <div class="perf-chart" id="perfChart" role="img" aria-label="Animated log-log chart of validation perplexity versus FLOPs for MoE, AoE, ReMoE, and RFMoE">
+        <div class="perf-tip" id="perfTip" aria-hidden="true"></div>
+        <svg id="perfSvg" viewBox="0 0 720 480" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <p class="fig-label">
+        <b>Routing-Free MoE consistently outperforms standard MoE, <a href="https://proceedings.mlr.press/v267/lv25b.html" target="_blank" rel="noopener">AoE</a>, and <a href="https://proceedings.iclr.cc/paper_files/paper/2025/hash/94dc604e115237a7f4a758b3146cd976-Abstract-Conference.html" target="_blank" rel="noopener">ReMoE</a> in language modeling.</b>
+        All models are trained from scratch on <a href="http://Skylion007.github.io/OpenWebTextCorpus." target="_blank" rel="noopener">OpenWebText</a> under identical environment conditions and best-performing configurations. FLOPs are estimated for one epoch.
+      </p>
+    </div>
+
+  </div>
+</section>
+
+<section id="downstream" class="page ink">
+  <div class="wrap">
+    <div class="results-bars rv" id="resultsBars" role="img" aria-label="Per-benchmark downstream accuracy mini bar charts across scales"></div>
+    <p class="fig-label rv">
+      <b>Downstream evaluation results for baselines and Routing-Free MoE across scales and benchmarks.</b>
+      Each panel compares standard MoE, AoE, ReMoE, and RFMoE trained on <a href="http://Skylion007.github.io/OpenWebTextCorpus." target="_blank" rel="noopener">OpenWebText</a> from scratch for one epoch under identical compute settings.
+      Bar plots show the averaged accuracy across all nine benchmarks and five representative ones.
+    </p>
+  </div>
+</section>
+
+<hr class="hairline">
+
+<section id="analysis" class="page band">
+  <div class="wrap">
+    <h2 class="rv"><span class="leaf">Dynamic Load-Balancing</span><br>for Tokens and Experts</h2>
+
+    <div class="fig-trio img-bottom rv-st rv">
+      <figure>
+        <img src="assets/images/load_balance_ec.png" alt="Expert-choice load balancing schematic" loading="lazy">
+        <figcaption><b>Expert choice (EC).</b> EC ensures hard expert-balancing and optimizes token-balancing via training.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/images/load_balance_tc.png" alt="Token-choice load balancing schematic" loading="lazy">
+        <figcaption><b>Token choice (TC).</b> TC ensures hard token-balancing and optimizes expert-balancing via training.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/images/load_balance_rf.png" alt="Routing-Free unified load balancing schematic" loading="lazy">
+        <figcaption><b>Unified load-balancing.</b> Routing-Free MoE adaptively optimizes both token and expert balancing via training.</figcaption>
+      </figure>
+    </div>
+
+  </div>
+</section>
+
+<section id="balance" class="page grey">
+  <div class="wrap">
+    <h2 class="rv"><span class="leaf">Customizable Control</span><br>for Efficiency and Effort</h2>
+
+    <div class="dual-plots rv-st rv">
+      <figure class="dual-plot">
+        <div class="dual-chart" role="img" aria-label="Mu interpolation: perplexity and eval throughput versus mixing coefficient">
+          <svg id="muSvg" viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+        <figcaption><b>Effect of load balancing interpolation μ.</b> Reported throughput is measured as evaluation samples processed per second. Results from scale S with r=32, λ₀=10⁻¹⁰, η=0.02, and α=10⁻³.</figcaption>
+      </figure>
+      <figure class="dual-plot">
+        <div class="dual-chart" role="img" aria-label="Theta sweep: downstream average and FLOPs versus inference threshold">
+          <svg id="thetaSvg" viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+        <figcaption><b>Effect of adjusting global threshold θ.</b> Avg. denotes average performance across downstream benchmarks. FLOPs are estimated. Results from scale S with r=16, λ₀=10⁻¹⁰, η=0.02, μ=0.5, and α=10⁻³.</figcaption>
+      </figure>
+    </div>
+
+  </div>
+</section>
+
+<section id="stability" class="page band">
+  <div class="wrap">
+    <h2 class="rv"><span class="leaf">Adaptive Sparsity</span> and<br> Robust Convergence</h2>
+
+    <div class="fig-trio eq-h rv-st rv">
+      <figure>
+        <img src="assets/images/loss_metrics_density.png" alt="Density, target density, and density proxy during training" loading="lazy" width="491" height="368">
+        <figcaption><b>Training Dynamics of Activation Ratio.</b> Density ρ, density target ρ<sub>∞</sub>, and density proxy ρ̃. Results from scale S with r=16, λ₀=10⁻¹⁰, η=0.02, μ=0.5, and α=10⁻³.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/images/loss_metrics_lambda_LB.png" alt="Adaptive lambda and load-balancing loss" loading="lazy" width="546" height="368">
+        <figcaption><b>Training Dynamics of Adaptive Load-Balancing.</b> Adaptive coefficient λ and load-balancing loss ℒ<sub>LB</sub>. Results from the same configuration.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/images/loss_metrics_losses.png" alt="Train loss, LM loss, and regularized load-balancing term" loading="lazy" width="445" height="368">
+        <figcaption><b>Training Dynamics of Losses.</b> Training loss ℒ, language modeling loss ℒ<sub>LM</sub>, and regularization term λℒ<sub>LB</sub>. Results from the same configuration.</figcaption>
+      </figure>
+    
+    </div>
+
+    <hr class="hairline">
+
+    <div class="fig-duo rv-st rv">
+      <figure>
+        <img src="assets/images/training_stability_S.png" alt="Training stability curves at scale S across learning rates" loading="lazy">
+        <figcaption><b>Training dynamics of Routing-Free MoE at scale S with different learning rate.</b> Results with r=16, λ₀=10⁻¹⁰, and η=0.02.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/images/training_stability_L.png" alt="Training stability curves at scale L across learning rates" loading="lazy">
+        <figcaption><b>Training dynamics of Routing-Free MoE at scale L with different learning rate.</b> Results with r=16, λ₀=10⁻¹⁰, and η=0.02, and α=10⁻³.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="deployment" class="page ink">
+  <div class="wrap">
+    <h2 class="rv">Expert Parallelism<br><span class="leaf">Without Bottlenecks</span></h2>
+
+    <div class="ep-bars rv" id="epBars">
+      <div class="fig-duo">
+        <div class="ep-chart" role="img" aria-label="Prefill throughput per device versus number of expert-parallel devices for MoE and RFMoE">
+          <div class="ep-tip" aria-hidden="true"></div>
+          <svg id="epPrefillSvg" viewBox="0 0 400 280" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+        <div class="ep-chart" role="img" aria-label="Decode throughput per device versus number of expert-parallel devices for MoE and RFMoE">
+          <div class="ep-tip" aria-hidden="true"></div>
+          <svg id="epDecodeSvg" viewBox="0 0 400 280" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+      </div>
+      <div class="ep-legend rb-legend" id="epLegend" aria-hidden="true"></div>
+    </div>
+    <div class="fig-duo ep-captions rv">
+      <p class="fig-label"><b>Prefill throughput per device under expert parallelism.</b> Prefill process T = 1,024 tokens in a single forward pass. All runs use batch size 1 with input tokens sampled randomly from OpenWebText, bfloat16 precision, and report the mean over 10 repetitions after 3 warmup ones.</p>
+      <p class="fig-label"><b>Autoregressive decode throughput per device under expert parallelism.</b> Decode generates 128 tokens autoregressively with T = 1 per step. All runs use batch size 1 with input tokens sampled randomly from OpenWebText, bfloat16 precision, and report the mean over 10 repetitions after 3 warmup steps.</p>
+    </div>
+  </div>
+</section>
+
+<section id="organization" class="page band">
+  <div class="wrap">
+    <h2 class="rv"><span class="leaf">Emergent Self-Organization</span><br>Patterns Across Layers</h2>
+    <div class="fig-block rv">
+      <img src="assets/images/expert_evolution.png" alt="Per-layer expert activation evolution during training" loading="lazy">
+      <p class="fig-label">
+        <b>Evolution of expert activation across layers during training under global density target.</b>
+        Left panel shows the per-layer mean activation as lines, along with IQR as shaded band regions using 1,000-step moving average smoothing. Right panel shows activation distribution at the final training step. Model at scale S trained on OpenWebText for one epoch.
+      </p>
+    </div>
+  </div>
+</section>
+
+<header class="masthead page" id="end">
+  <div class="hero-shell">
+    <div class="wrap-narrow">
+      <img class="hero-icons rv" style="--d:0" src="assets/images/icons.svg" alt="LMU Munich, UCLA, MCML, and affiliated institutions" width="413" height="23">
+      <p class="brand-hero rv" style="--d:1">
+        <span class="bh-line bh-em"><b>Routing-Free</b></span>
+        <span class="bh-line bh-em">Mixture-of-Experts</span>
+      </p>
+      <p class="authors rv" style="--d:2">
+        <a href="https://liuyilun2000.github.io/" target="_blank" rel="noopener noreferrer">Yilun Liu</a><sup>✦,1,3</sup>&nbsp;&nbsp;
+        <a href="https://jingrug.github.io/">Jinru Han</a><sup>✦,2</sup>&nbsp;&nbsp;
+        <a href="https://yansikuan.github.io/" target="_blank" rel="noopener noreferrer">Sikuan Yan</a><sup>1</sup>&nbsp;&nbsp;
+        <a href="https://www.dbs.ifi.lmu.de/~tresp/" target="_blank" rel="noopener noreferrer">Volker Tresp</a><sup>1,3</sup>&nbsp;&nbsp;
+        <a href="https://yunpuma.github.io/" target="_blank" rel="noopener noreferrer">Yunpu Ma</a><sup>1,3</sup>
+      </p>
+      <p class="affil rv" style="--d:3">
+        <sup>1</sup>LMU Munich&nbsp;&nbsp;&nbsp;<sup>2</sup>UCLA&nbsp;&nbsp;&nbsp;<sup>3</sup>MCML&nbsp;&nbsp;&nbsp;<sup>✦</sup>Equal contribution
+      </p>
+      <p class="emails rv" style="--d:4">
+        <a href="mailto:yilun.liu@tum.de">yilun.liu@tum.de</a>
+        <a href="mailto:jinruhan1219@ucla.edu">jinruhan1219@ucla.edu</a>
+        <a href="mailto:cognitive.yunpu@gmail.com">cognitive.yunpu@gmail.com</a>
+      </p>
+    </div>
+  </div>
+</header>
+</div><!-- .deck -->
+</div><!-- .stage -->
+
+<script src="assets/js/ambient-field.js" defer></script>
+<script src="assets/js/expert-parallel-chart.js" defer></script>
+<script src="assets/js/performance-chart.js" defer></script>
+<script src="assets/js/results-bars.js" defer></script>
+<script src="assets/js/dual-axis-plots.js" defer></script>
+<script>
+(() => {
+  const deck = document.getElementById('deck');
+  if (!deck) return;
+
+  const pages = Array.from(deck.querySelectorAll(':scope > .page'));
+
+  pages.forEach((page) => {
+    if (page.querySelector(':scope > .page-fit')) return;
+    const fit = document.createElement('div');
+    fit.className = 'page-fit';
+    const inner = document.createElement('div');
+    inner.className = 'page-inner';
+    while (page.firstChild) inner.appendChild(page.firstChild);
+    fit.appendChild(inner);
+    page.appendChild(fit);
+  });
+
+  const fitAll = () => {
+    pages.forEach((page) => {
+      const fit = page.querySelector(':scope > .page-fit');
+      const inner = fit && fit.querySelector(':scope > .page-inner');
+      if (!fit || !inner) return;
+      inner.style.transform = 'none';
+      const availW = fit.clientWidth;
+      const availH = fit.clientHeight;
+      const w = Math.max(inner.scrollWidth, inner.offsetWidth, 1);
+      const h = Math.max(inner.scrollHeight, inner.offsetHeight, 1);
+      const scale = Math.min(1, availW / w, availH / h);
+      inner.style.transform = `scale(${scale})`;
+    });
+  };
+
+  let pageIndex = 0;
+  let activePage = null;
+  let animating = false;
+  let pendingActivate = null;
+  const SCROLL_MS = 480;
+
+  const setIndexFromScroll = () => {
+    const h = deck.clientHeight || 1;
+    pageIndex = Math.max(0, Math.min(pages.length - 1, Math.round(deck.scrollTop / h)));
+  };
+
+  const freezePage = (page) => {
+    page?.classList.add('record-reset');
+  };
+
+  const unfreezePage = (page) => {
+    page?.classList.remove('record-reset');
+  };
+
+  const revealPage = (page) => {
+    if (!page) return;
+    page.querySelectorAll('.rv, .rv-st').forEach((el) => el.classList.add('in'));
+    page.dispatchEvent(new CustomEvent('record:enter'));
+  };
+
+  const resetPage = (page) => {
+    if (!page) return;
+    freezePage(page);
+    page.querySelectorAll('.rv, .rv-st').forEach((el) => el.classList.remove('in'));
+    page.dispatchEvent(new CustomEvent('record:leave'));
+    void page.offsetHeight;
+    unfreezePage(page);
+  };
+
+  const settlePage = (i) => {
+    const target = pages[Math.max(0, Math.min(pages.length - 1, i))];
+    if (!target) return;
+    const leaving = activePage;
+    if (leaving && leaving !== target) resetPage(leaving);
+    activePage = target;
+    revealPage(target);
+  };
+
+  const scrollToPage = (i, behavior = 'smooth') => {
+    const next = Math.max(0, Math.min(pages.length - 1, i));
+    pageIndex = next;
+    animating = true;
+    pages[next].scrollIntoView({ behavior, block: 'start' });
+    window.setTimeout(() => {
+      animating = false;
+      setIndexFromScroll();
+    }, behavior === 'smooth' ? SCROLL_MS : 20);
+  };
+
+  const goTo = (i, behavior = 'smooth') => {
+    const next = Math.max(0, Math.min(pages.length - 1, i));
+    const target = pages[next];
+    const changing = activePage !== target;
+    if (pendingActivate) {
+      clearTimeout(pendingActivate);
+      pendingActivate = null;
+    }
+    scrollToPage(next, behavior);
+    if (!changing) return;
+    const delay = behavior === 'smooth' ? SCROLL_MS + 30 : 20;
+    pendingActivate = window.setTimeout(() => {
+      pendingActivate = null;
+      settlePage(next);
+    }, delay);
+  };
+
+  pages.forEach((page) => resetPage(page));
+
+  window.addEventListener('keydown', (e) => {
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
+    if (e.key === 'ArrowDown' || e.key === 'PageDown' || (e.key === ' ' && !e.shiftKey)) {
+      e.preventDefault();
+      goTo(pageIndex + 1);
+    } else if (e.key === 'ArrowUp' || e.key === 'PageUp' || (e.key === ' ' && e.shiftKey)) {
+      e.preventDefault();
+      goTo(pageIndex - 1);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      goTo(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      goTo(pages.length - 1);
+    }
+  });
+
+  deck.addEventListener('scroll', () => {
+    if (!animating) setIndexFromScroll();
+  }, { passive: true });
+
+  let wheelLock = false;
+  deck.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (wheelLock || animating) return;
+    const dir = e.deltaY === 0 ? 0 : (e.deltaY > 0 ? 1 : -1);
+    if (!dir) return;
+    wheelLock = true;
+    goTo(pageIndex + dir);
+    window.setTimeout(() => { wheelLock = false; }, 480);
+  }, { passive: false });
+
+  window.addEventListener('resize', () => {
+    fitAll();
+    goTo(pageIndex, 'auto');
+  });
+
+  window.addEventListener('load', () => {
+    fitAll();
+    [200, 600, 1200, 2000].forEach((ms) => setTimeout(fitAll, ms));
+  });
+  fitAll();
+  scrollToPage(0, 'auto');
+  window.setTimeout(() => settlePage(0), 40);
+})();
+</script>
+</body>
+</html>
