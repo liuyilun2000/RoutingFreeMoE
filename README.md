@@ -1,6 +1,6 @@
 # Routing-Free Mixture-of-Experts
 
-Reference implementation for **"Routing-Free Mixture-of-Experts"** (EMNLP 2026 main).
+Reference implementation for **"Routing-Free Mixture-of-Experts"** 
 
 Routing-Free MoE (RFMoE) encapsulates all sparse-activation logic inside each
 expert and optimizes it through continuous gradient flow — no external router,
@@ -112,10 +112,10 @@ python scripts/analysis/print_model_size.py
 ## Citation
 
 ```bibtex
-@inproceedings{routingfreemoe2026,
-  title     = {Routing-Free Mixture-of-Experts},
-  booktitle = {Proceedings of the Conference on Empirical Methods in
-               Natural Language Processing (EMNLP)},
-  year      = {2026}
+@article{liu2026routingfree,
+  title   = {Routing-Free Mixture-of-Experts},
+  author  = {Liu, Yilun and Han, Jinru and Yan, Sikuan and Tresp, Volker and Ma, Yunpu},
+  journal = {arXiv preprint arXiv:2604.00801},
+  year    = {2026}
 }
 ```
