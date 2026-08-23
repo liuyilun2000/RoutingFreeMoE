@@ -188,6 +188,7 @@ init_baseline/
 *.out
 *.log
 *.png
+!docs/assets/images/*.png
 
 
 *.err

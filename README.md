@@ -1,12 +1,14 @@
 # Routing-Free Mixture-of-Experts
 
-Reference implementation for **"Routing-Free Mixture-of-Experts"** 
+<p align="center">
+  <a href="https://arxiv.org/abs/2604.00801"><img src="https://img.shields.io/badge/arXiv-2604.00801-b31b1b.svg" alt="arXiv"></a>
+  <a href="https://liuyilun2000.github.io/RoutingFreeMoE/"><img src="https://img.shields.io/badge/Project-Page-2E8B57.svg" alt="Project Page"></a>
+  <a href="https://github.com/liuyilun2000/RoutingFreeMoE"><img src="https://img.shields.io/badge/GitHub-Code-181717.svg?logo=github&logoColor=white" alt="Code"></a>
+</p>
 
-Routing-Free MoE (RFMoE) encapsulates all sparse-activation logic inside each
-expert and optimizes it through continuous gradient flow — no external router,
-no Softmax, no hard-coded Top-K. A unified adaptive load-balancing objective
-jointly optimizes expert- and token-balancing through a configurable
-interpolation.
+Official repository of **Routing-Free Mixture-of-Experts**, accepted at **EMNLP 2026 Main Conference**.
+
+Standard MoE relies on a top-down pipeline: an external router scores experts, Softmax normalizes the distribution, and Top-K fixes the activation pattern. **Routing-Free MoE (RFMoE)** removes this centralized routing entirely. Each expert decides whether to activate on its own, and the full stack is trained end-to-end through continuous gradient flow—without an external router, Softmax, or hard-coded Top-K. A unified adaptive load-balancing objective jointly optimizes expert- and token-level balance through a configurable interpolation.
 
 ## Repository layout
 
@@ -112,10 +114,13 @@ python scripts/analysis/print_model_size.py
 ## Citation
 
 ```bibtex
-@article{liu2026routingfree,
-  title   = {Routing-Free Mixture-of-Experts},
-  author  = {Liu, Yilun and Han, Jinru and Yan, Sikuan and Tresp, Volker and Ma, Yunpu},
-  journal = {arXiv preprint arXiv:2604.00801},
-  year    = {2026}
+@misc{liu2026routingfreemixtureofexperts,
+  title={Routing-Free Mixture-of-Experts},
+  author={Yilun Liu and Jinru Han and Sikuan Yan and Volker Tresp and Yunpu Ma},
+  year={2026},
+  eprint={2604.00801},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG},
+  url={https://arxiv.org/abs/2604.00801}
 }
 ```
