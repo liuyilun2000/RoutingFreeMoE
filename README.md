@@ -1,7 +1,7 @@
 # Routing-Free Mixture-of-Experts
 
 <p align="center">
-  <a href="https://arxiv.org/abs/2604.00801"><img src="https://img.shields.io/badge/arXiv-2604.00801-b31b1b.svg" alt="arXiv"></a>
+  <a href="https://aclanthology.org/2026.emnlp-main.579/"><img src="https://img.shields.io/badge/EMNLP-2026-b31b1b.svg" alt="EMNLP 2026 Paper"></a>
   <a href="https://liuyilun2000.github.io/RoutingFreeMoE/"><img src="https://img.shields.io/badge/Project-Page-2E8B57.svg" alt="Project Page"></a>
   <a href="https://github.com/liuyilun2000/RoutingFreeMoE"><img src="https://img.shields.io/badge/GitHub-Code-181717.svg?logo=github&logoColor=white" alt="Code"></a>
 </p>
@@ -114,13 +114,16 @@ python scripts/analysis/print_model_size.py
 ## Citation
 
 ```bibtex
-@misc{liu2026routingfreemixtureofexperts,
-  title={Routing-Free Mixture-of-Experts},
-  author={Yilun Liu and Jinru Han and Sikuan Yan and Volker Tresp and Yunpu Ma},
+@inproceedings{liu-etal-2026-routing,
+  title={Routing-Free Mixture of Experts},
+  author={Liu, Yilun and Han, Jinru and Yan, Sikuan and Tresp, Volker and Ma, Yunpu},
+  booktitle={Proceedings of the 2026 Conference on Empirical Methods in Natural Language Processing},
   year={2026},
-  eprint={2604.00801},
-  archivePrefix={arXiv},
-  primaryClass={cs.LG},
-  url={https://arxiv.org/abs/2604.00801}
+  month=oct,
+  address={Budapest, Hungary},
+  publisher={Association for Computational Linguistics},
+  pages={13253--13271},
+  doi={10.18653/2026.emnlp-main.579},
+  url={https://aclanthology.org/2026.emnlp-main.579/}
 }
 ```
